@@ -1,42 +1,130 @@
-# Vertex AI Search — Real-Time Query Understanding & Dynamic Boosting
+# Vertex AI Search — Real-Time Entertainment Discovery, Dynamic Boosting & Document CRUD
 
-This directory contains the sample dataset generator, Vertex AI Search (Discovery Engine) datastore setup, and `boostSpec` evaluation suite for movies and live entertainment events.
+An end-to-end reference implementation for **movies and live entertainment discovery** powered by **Google Cloud Vertex AI Search (Discovery Engine)** and **Gemini 3.5 Flash-Lite**.
 
-## 1. Configuration & Setup
-
-All project-specific identifiers and credentials are loaded from `config.local.json` (git-ignored) or environment variables via [`config.py`](./config.py).
-
-```bash
-# Copy the template and populate your GCP project & Vertex AI Search IDs
-cp config.example.json config.local.json
-```
-
-| Config Key / Env Var | Description |
-| :--- | :--- |
-| `PROJECT_ID` | Google Cloud Project ID |
-| `PROJECT_NUMBER` | Google Cloud Project Number |
-| `LOCATION` | Discovery Engine location (default: `global`) |
-| `VERTEX_LOCATION` | Vertex AI Gemini endpoint location (default: `us-central1`) |
-| `DATASTORE_ID` | Vertex AI Search Data Store ID |
-| `ENGINE_ID` | Vertex AI Search Engine / App ID |
-| `BUCKET_NAME` | GCS bucket name for JSONL dataset upload |
-| `GCS_BLOB_PATH` | GCS object path (default: `sample_data/sample_metadata_200.jsonl`) |
-
-### Key Indexed Schema Fields
-* **Geolocation (`GEOLOCATION`)**: `location_city` (supports `location_city:GEO_DISTANCE("lat,lng", radius_meters)` or `location_city:GEO_DISTANCE(lat, lng, radius_meters)`)
-* **Datetime (`DATETIME`, RFC3339 with `+05:30` offset)**: `showtime_start`, `showtime_end`, `release_date`, `available_time`, `createdAt`
-* **Text / Keyword Arrays**: `record_type` (`"movie"` | `"event"`), `languages`, `searchKeywords`, `hash_tags`, `formats`, `screen_types`, `city`, `title`, `synopsis`, `cast`, `genre`
+This repository demonstrates how to:
+1. **Provision & Sync a Vertex AI Search DataStore** with a 4-hour periodic GCS DataConnector (`14400s`) and an Enterprise Search Engine.
+2. **Perform Real-Time Document CRUD** (`Create`, `Batch Inline Import`, `GET + PATCH Modify`, and `DELETE`) directly against the Discovery Engine `documents` REST API without waiting for periodic GCS syncs.
+3. **Rank Results by Geolocation Proximity** using concentric `location_city:GEO_DISTANCE(lat, lng, radius_meters)` rings inside `conditionBoostSpecs`.
+4. **Translate Natural-Language & Hinglish Queries in Real Time** (`"stand up comedy tonight in pune"`, `"is weekend delhi mein kya chal raha hai"`, `"pottery classes every saturday in october"`) into structured search intents via **Gemini 3.5 Flash-Lite** and compile them deterministically into zero-error Vertex AI Search `boostSpec` conditions.
 
 ---
 
-## 2. How `GEO_DISTANCE` Boosting Works (Why Concentric Rings Are Needed)
+## Table of Contents
 
-In Vertex AI Search, `location_city:GEO_DISTANCE(lat, lng, radius_meters)` inside `conditionBoostSpecs` is a **boolean circle predicate**—it is **not** a continuous distance-decay function:
-* Every document inside `radius_meters` gets the exact same flat boost.
-* If you set `radius_meters = 5000000` (`5,000 km`), every Indian city (`Chennai`, `Goa`, `Mumbai`, `Kolkata`, `Delhi NCR`) falls inside the circle and receives the same boost, so the relative ranking does not change.
+1. [Repository Structure](#1-repository-structure)
+2. [System Architecture](#2-system-architecture)
+3. [Configuration & Setup](#3-configuration--setup)
+4. [Dataset Schema & Indexed Fields](#4-dataset-schema--indexed-fields)
+5. [Geolocation Boosting (`GEO_DISTANCE` Concentric Rings)](#5-geolocation-boosting-geo_distance-concentric-rings)
+6. [Real-Time Query-to-Boost Pipeline (Gemini + Deterministic Compiler)](#6-real-time-query-to-boost-pipeline-gemini--deterministic-compiler)
+7. [Benchmark Evaluation Summary (12 Natural-Language Queries)](#7-benchmark-evaluation-summary-12-natural-language-queries)
+8. [Latency Benchmark Report (`Single Query` vs. `Real-Time LLM Pipeline`)](#8-latency-benchmark-report-single-query-vs-real-time-llm-pipeline)
+9. [DataStore Document CRUD Guide (Create, Batch Insert, Modify, Delete)](#9-datastore-document-crud-guide-create-batch-insert-modify-delete)
+10. [Quickstart & CLI Usage](#10-quickstart--cli-usage)
 
-### Solution: Concentric `GEO_DISTANCE` Rings
-By stacking multiple concentric circles in `conditionBoostSpecs`, closer documents match multiple conditions and accumulate a higher cumulative boost:
+---
+
+## 1. Repository Structure
+
+| File | Purpose |
+| :--- | :--- |
+| [`config.py`](./config.py) | Centralized configuration loader reading from environment variables or git-ignored `config.local.json` with safe fallback defaults. |
+| [`config.example.json`](./config.example.json) | Template configuration file containing placeholder GCP project, GCS, Discovery Engine, and Gemini model settings. |
+| [`generate_sample_data.py`](./generate_sample_data.py) | Deterministic dataset generator producing **234 structured entertainment records** (113 movies + 121 live events across 8 Indian cities) in [`sample_metadata_200.json`](./sample_metadata_200.json). |
+| [`setup_gcs_datastore.py`](./setup_gcs_datastore.py) | Converts JSON to JSONL, uploads to GCS, provisions the Discovery Engine GCS DataConnector (`PERIODIC` 4-hour sync) and Enterprise Search Engine, and verifies live search. |
+| [`manage_datastore_documents.py`](./manage_datastore_documents.py) | Real-time Document CRUD script demonstrating single creation (`POST`), batch inline import (`POST :import`), partial field modification (`GET` + `PATCH`), and deletion (`DELETE`). |
+| [`query_with_boost.py`](./query_with_boost.py) | Evaluates concentric `GEO_DISTANCE` proximity boosting and runs all 12 natural-language benchmark queries comparing baseline vs. boosted rankings. |
+| [`realtime_query_benchmark.py`](./realtime_query_benchmark.py) | End-to-end latency benchmark comparing **Single Query (Direct Search)** vs. **Real-Time Query Resolution (Gemini 3.5 Flash-Lite + Python Boost Compiler + Search)**. |
+| [`sample_metadata_200.json`](./sample_metadata_200.json) | Generated dataset of 234 movies and live events with geolocation coordinates, ISO-8601 `+05:30` showtimes, release dates, languages, formats, and hashtags. |
+
+---
+
+## 2. System Architecture
+
+```mermaid
+flowchart TB
+    subgraph Ingestion["1. Ingestion & Real-Time Index Maintenance"]
+        direction LR
+        GEN["generate_sample_data.py\n(234 Movies & Events)"] --> JSONL["GCS Bucket (*.jsonl)\n4-Hour Periodic Sync"]
+        JSONL --> DS[("Vertex AI Search\nDataStore & Engine")]
+        CRUD["manage_datastore_documents.py\nReal-Time REST CRUD\n(POST / PATCH / DELETE)"] --> DS
+    end
+
+    subgraph QueryPlane["2. Real-Time Query Understanding & Dynamic Boosting"]
+        direction LR
+        UQ["User Query\n'stand up comedy tonight in pune'\n+ Current Time (ISO-8601)\n+ User GPS / City"] --> LLM["Stage 1: Gemini 3.5 Flash-Lite\n(Structured JSON Schema)"]
+        LLM --> INTENT["ExtractedSearchIntent\n• search_query: 'standup comedy'\n• city: 'Pune'\n• time_windows: [17:00..23:59]\n• hash_tags: ['STANDUP_COMEDY']"]
+        INTENT --> COMP["Stage 2: Deterministic Python\ncompile_boost_specs()"]
+        COMP --> SEARCH["Stage 3: Vertex AI Search\nservingConfigs/default_search:search"]
+    end
+
+    DS --- SEARCH
+```
+
+---
+
+## 3. Configuration & Setup
+
+All project-specific identifiers and credentials are loaded from `config.local.json` (git-ignored) or environment variables via [`config.py`](./config.py). No project IDs, app names, or account emails are hardcoded in version-controlled files.
+
+```bash
+# 1. Copy the template configuration
+cp config.example.json config.local.json
+
+# 2. Edit config.local.json with your GCP project, GCS bucket, and Vertex AI Search IDs
+```
+
+### Configuration Keys & Environment Variables
+
+| `config.local.json` Key | Environment Variable | Default / Placeholder | Description |
+| :--- | :--- | :--- | :--- |
+| `project_id` | `GCP_PROJECT_ID` | `your-gcp-project-id` | Google Cloud Project ID |
+| `project_number` | `GCP_PROJECT_NUMBER` | `000000000000` | Google Cloud Project Number |
+| `location` | `DISCOVERY_ENGINE_LOCATION` | `global` | Discovery Engine location (`global`, `us`, `eu`) |
+| `vertex_ai_location` | `VERTEX_AI_LOCATION` | `us-central1` | Vertex AI Gemini endpoint region |
+| `gcs_bucket` | `GCS_BUCKET` | `your-gcs-bucket-name` | GCS bucket used for JSONL staging |
+| `gcs_folder` | `GCS_FOLDER` | `sample_search_data` | GCS folder prefix for JSONL files |
+| `collection_id` | `COLLECTION_ID` | `sample-data-connector` | Discovery Engine Collection / DataConnector ID |
+| `datastore_id` | `DATASTORE_ID` | `sample-data-connector_gcs_store` | Vertex AI Search DataStore ID |
+| `engine_id` | `SEARCH_ENGINE_ID` | `your-search-engine-id` | Vertex AI Search Engine (App) ID |
+| `refresh_interval_seconds` | `REFRESH_INTERVAL_SECONDS` | `14400s` | Periodic GCS sync interval (`14400s` = 4 hours) |
+| `gcloud_account` | `GCLOUD_ACCOUNT` | `""` | Optional `gcloud` account for mTLS / CBA fallback |
+| `gemini_model` | `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model used for real-time intent extraction |
+
+---
+
+## 4. Dataset Schema & Indexed Fields
+
+The dataset ([`sample_metadata_200.json`](./sample_metadata_200.json)) contains **234 records** across **8 Indian cities** (`Mumbai`, `Delhi NCR`, `Bengaluru`, `Hyderabad`, `Chennai`, `Pune`, `Kolkata`, `Goa`):
+* **113 Movies (`MV00001` – `MV00113`)**: 100 base listings + 13 targeted benchmark listings.
+* **121 Live Events (`etm100000z` – `etm100120z`)**: 100 base listings + 21 targeted benchmark listings.
+
+### Key Schema Fields for Filtering & Boosting
+
+| Field Name | Vertex AI Search Type | Example Value | Usage in `conditionBoostSpecs` |
+| :--- | :--- | :--- | :--- |
+| `id` / `_id` | `STRING` (Primary Key) | `"MV00102"`, `"etm100104z"` | Document ID for CRUD & deduplication |
+| `record_type` | `STRING` (Filterable) | `"movie"` \| `"event"` | `record_type: ANY("movie")` |
+| `location_city` | `GEOLOCATION` | `{"address": "Pune, Maharashtra, India"}` | `location_city:GEO_DISTANCE(18.5204, 73.8567, 50000)` |
+| `location_latlng` | `OBJECT` (`lat`, `lng`) | `{"lat": 18.4892, "lng": 73.8205}` | Client-side Haversine distance verification |
+| `showtime_start` | `DATETIME` (RFC3339) | `"2026-10-07T20:00:00+05:30"` | `showtime_start >= "2026-10-07T17:00:00+05:30"` |
+| `release_date` | `DATETIME` (RFC3339) | `"2026-10-09T00:00:00+05:30"` | `release_date >= "2026-10-09T00:00:00+05:30"` |
+| `languages` | `ARRAY<STRING>` | `["Hindi", "Telugu"]` | `languages: ANY("Telugu")` |
+| `searchKeywords` | `ARRAY<STRING>` | `["stand up comedy", "pune", "tonight"]` | `searchKeywords: ANY("stand up comedy")` |
+| `hash_tags` | `ARRAY<STRING>` | `["STANDUP_COMEDY", "TONIGHT"]` | `hash_tags: ANY("STANDUP_COMEDY")` |
+| `formats` | `ARRAY<STRING>` | `["2D", "IMAX 2D", "4DX"]` | Display & format filtering |
+
+---
+
+## 5. Geolocation Boosting (`GEO_DISTANCE` Concentric Rings)
+
+In Vertex AI Search, `location_city:GEO_DISTANCE(lat, lng, radius_meters)` inside `conditionBoostSpecs` is a **boolean circle predicate** — it is **not** a continuous distance-decay function:
+* Every document inside `radius_meters` receives the exact same flat boost.
+* Setting a single large radius like `radius_meters = 5000000` (`5,000 km`) places every Indian city inside the same circle, giving them identical boost scores and leaving relative ranking unchanged.
+
+### Solution: Stacking Concentric `GEO_DISTANCE` Rings
+By stacking multiple concentric circles in `conditionBoostSpecs`, closer venues match more rings and accumulate a higher cumulative boost score:
 
 ```json
 [
@@ -47,150 +135,63 @@ By stacking multiple concentric circles in `conditionBoostSpecs`, closer documen
 ]
 ```
 
-* **Chennai (`3.3 km`)**: Matches all 4 rings $\rightarrow$ `#1`
-* **Goa (`744.3 km`)**: Matches 3 rings (`800km`, `1150km`, `1500km`) $\rightarrow$ `#2`
-* **Mumbai (`1031.8 km`)**: Matches 2 rings (`1150km`, `1500km`) $\rightarrow$ `#3`
-* **Kolkata (`1355.6 km`)**: Matches 1 ring (`1500km`) $\rightarrow$ `#4`
-* **Delhi NCR (`1746.3 km`)**: Matches 0 rings $\rightarrow$ `#5`
+**Verified Distance Ranking for `"Welcome to the Jungle"` from Chennai (`13.0827, 80.2707`):**
+1. **Chennai (`3.3 km`)** — Matches all 4 rings (`100km`, `800km`, `1150km`, `1500km`) $\rightarrow$ **Rank #1** (`[MV00098]`)
+2. **Goa (`744.3 km`)** — Matches 3 rings (`800km`, `1150km`, `1500km`) $\rightarrow$ **Rank #2** (`[MV00099]`)
+3. **Mumbai (`1031.8 km`)** — Matches 2 rings (`1150km`, `1500km`) $\rightarrow$ **Rank #3** (`[MV00096]`)
+4. **Kolkata (`1355.6 km`)** — Matches 1 ring (`1500km`) $\rightarrow$ **Rank #4** (`[MV00097]`)
+5. **Delhi NCR (`1746.3 km`)** — Matches 0 rings $\rightarrow$ **Rank #5** (`[MV00100]`)
 
 ---
 
-## 3. Real-Time Query-to-Boost Translation Architecture
+## 6. Real-Time Query-to-Boost Pipeline (Gemini + Deterministic Compiler)
 
-In production, **never ask an LLM to write raw Vertex AI Search `boostSpec` filter strings directly** (it can hallucinate field names, miss quotes, or write invalid date/geo syntax).
+> [!IMPORTANT]
+> **Never ask an LLM to write raw Vertex AI Search `boostSpec` filter strings directly.** LLMs can hallucinate schema field names, omit quotes, or generate invalid date/geolocation syntax. Instead, use a **2-stage pipeline**:
+> 1. **Stage 1 (LLM Intent Extraction)**: Constrain `gemini-3.5-flash-lite` with a strict `responseSchema` (`ExtractedSearchIntent`) and pass the current ISO-8601 timestamp in the system prompt so relative dates (`"tonight"`, `"this friday"`, `"every saturday in october"`) resolve to exact ISO-8601 windows.
+> 2. **Stage 2 (Deterministic Boost Compiler)**: Compile the validated `ExtractedSearchIntent` object into guaranteed-valid Vertex AI Search `conditionBoostSpecs` in Python (~20 microseconds).
 
-Instead, use a **2-stage real-time pipeline** (~150–250ms total latency):
-
-```mermaid
-flowchart LR
-    A["User Query\n'stand up comedy tonight in pune'\n+ Current Time (ISO-8601)\n+ User GPS / City"] --> B["Stage 1: Gemini 3.5 Flash-Lite\n(Structured JSON Output)"]
-    B --> C["Extracted Intent JSON\nsearch_query: 'stand up comedy'\ncity: 'Pune'\ntime_windows: [17:00..23:59]"]
-    C --> D["Stage 2: Deterministic Python\nBoost Compiler"]
-    D --> E["Vertex AI Search Call\nquery='stand up comedy'\n+ conditionBoostSpecs"]
-```
-
-### Stage 1: Fast Structured Extraction (`gemini-3.5-flash-lite`)
-Pass the **current timestamp & day of week** in the system prompt so Gemini resolves relative dates (`"tonight"`, `"tomorrow before 11"`, `"this friday"`, `"this weekend"`, `"next week"`, `"gandhi jayanti holiday"`, `"every saturday in october"`) into exact ISO-8601 start/end windows, and constrain its output with `response_schema` (Pydantic):
+### Stage 1: Structured Intent Schema (`ExtractedSearchIntent`)
 
 ```python
-from datetime import datetime
-from typing import Literal, Optional
-from pydantic import BaseModel, Field
-from google import genai
-from google.genai import types
-
-
 class TimeWindow(BaseModel):
     start_iso: str = Field(
-        description="ISO-8601 start time with +05:30 offset, e.g. 2026-10-07T17:00:00+05:30"
+        description="ISO-8601 start timestamp with +05:30 offset, e.g. 2026-10-07T17:00:00+05:30"
     )
     end_iso: str = Field(
-        description="ISO-8601 end time with +05:30 offset, e.g. 2026-10-07T23:59:59+05:30"
+        description="ISO-8601 end timestamp with +05:30 offset, e.g. 2026-10-07T23:59:59+05:30"
     )
 
 
 class ExtractedSearchIntent(BaseModel):
-    search_query: str = Field(
-        description=(
-            "Clean core query for Vertex AI Search (what the user wants, e.g. "
-            "'open mic', 'stand up comedy', 'movie', 'events', 'pottery workshop')"
-        )
-    )
+    search_query: str
     record_type: Optional[Literal["movie", "event"]] = None
     city: Optional[
-        Literal[
-            "Mumbai",
-            "Delhi NCR",
-            "Bengaluru",
-            "Hyderabad",
-            "Chennai",
-            "Pune",
-            "Kolkata",
-            "Goa",
-        ]
+        Literal["Mumbai", "Delhi NCR", "Bengaluru", "Hyderabad", "Chennai", "Pune", "Kolkata", "Goa"]
     ] = None
-    languages: list[str] = Field(
-        default_factory=list,
-        description="Title-cased languages, e.g. ['Telugu', 'Hindi']",
-    )
+    languages: List[str] = Field(default_factory=list)
     audience: Optional[Literal["kids", "family", "adults"]] = None
-    keywords: list[str] = Field(
-        default_factory=list,
-        description="Lowercase genre/topic keywords for searchKeywords",
-    )
-    hash_tags: list[
+    keywords: List[str] = Field(default_factory=list)
+    hash_tags: List[
         Literal[
-            "MORNING_SHOW",
-            "LATE_NIGHT_SHOW",
-            "NEW_RELEASE",
-            "FRIDAY_RELEASE",
-            "UPCOMING_MOVIE",
-            "KIDS_EVENT",
-            "OPEN_MIC",
-            "STANDUP_COMEDY",
-            "GARBA_NIGHT",
-            "NEW_YEAR_EVE",
-            "STAGE_PLAY",
-            "POTTERY_WORKSHOP",
+            "MORNING_SHOW", "LATE_NIGHT_SHOW", "NEW_RELEASE", "FRIDAY_RELEASE",
+            "UPCOMING_MOVIE", "KIDS_EVENT", "OPEN_MIC", "STANDUP_COMEDY",
+            "GARBA_NIGHT", "NEW_YEAR_EVE", "STAGE_PLAY", "POTTERY_WORKSHOP",
+            "SATURDAY_OCTOBER",
         ]
     ] = Field(default_factory=list)
-    date_field: Literal["showtime_start", "release_date"] = Field(
-        default="showtime_start",
-        description="Use 'release_date' when query asks for 'releasing' or 'upcoming' movies; otherwise 'showtime_start'",
-    )
-    time_windows: list[TimeWindow] = Field(default_factory=list)
-
-
-def extract_query_intent(user_query: str, now_iso: str = "2026-10-07T07:40:00+05:30") -> ExtractedSearchIntent:
-    from config import GEMINI_MODEL, PROJECT_ID, VERTEX_LOCATION
-
-    client = genai.Client(vertexai=True, project=PROJECT_ID, location=VERTEX_LOCATION)
-    prompt = f"""You are a real-time search query parser for an entertainment & ticketing platform.
-Current timestamp: {now_iso} (Wednesday, October 7, 2026).
-Extract the search intent, canonical city, record_type, languages, keywords, hash_tags, and exact ISO-8601 time_windows (+05:30) from the user query.
-- For 'tonight': today 17:00:00 to 23:59:59
-- For 'morning': 06:00:00 to 12:00:00 (or before specific hour if stated, e.g. 'before 11' -> 06:00:00 to 11:00:00)
-- For 'late night / after 10 pm': 22:00:00 to next day 03:00:00
-- For 'this weekend': Saturday 2026-10-10T00:00:00+05:30 to Sunday 2026-10-11T23:59:59+05:30
-- For recurring days like 'every saturday in october': output one TimeWindow per Saturday in October.
-
-User Query: {user_query!r}"""
-
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=ExtractedSearchIntent,
-            temperature=0.0,
-        ),
-    )
-    return ExtractedSearchIntent.model_validate_json(response.text)
+    date_field: Literal["showtime_start", "release_date"] = "showtime_start"
+    time_windows: List[TimeWindow] = Field(default_factory=list)
 ```
 
----
-
-### Stage 2: Deterministic Python Boost Compiler
-Your backend takes the validated `ExtractedSearchIntent` object and deterministically builds `conditionBoostSpecs` using the datastore schema (`location_city`, `showtime_start`, `release_date`, `languages`, `searchKeywords`, `hash_tags`):
+### Stage 2: Deterministic Boost Compiler (`compile_boost_specs`)
 
 ```python
-CITY_COORDS = {
-    "Mumbai": (18.9946, 72.8245),
-    "Delhi NCR": (28.6139, 77.2090),
-    "Bengaluru": (12.9716, 77.5946),
-    "Hyderabad": (17.3850, 78.4867),
-    "Chennai": (13.0827, 80.2707),
-    "Pune": (18.5204, 73.8567),
-    "Kolkata": (22.5726, 88.3639),
-    "Goa": (15.4989, 73.8278),
-}
-
-
 def compile_boost_specs(
     intent: ExtractedSearchIntent,
-    user_latlng: Optional[tuple[float, float]] = None,
-) -> list[dict]:
-    specs = []
+    user_latlng: Optional[Tuple[float, float]] = None,
+) -> List[Dict[str, Any]]:
+    specs: List[Dict[str, Any]] = []
 
     # 1. Record Type + Language Boost
     type_clauses = []
@@ -213,21 +214,14 @@ def compile_boost_specs(
             kw_clauses.append(f"hash_tags: ANY({tags})")
         specs.append({"condition": " OR ".join(kw_clauses), "boost": 0.6})
 
-    # 3. Location Boost (Explicit city in query OR fallback to user's GPS concentric rings)
+    # 3. Location Boost (Explicit city in query OR concentric rings around user GPS)
     if intent.city and intent.city in CITY_COORDS:
         lat, lng = CITY_COORDS[intent.city]
-        specs.append({
-            "condition": f"location_city:GEO_DISTANCE({lat}, {lng}, 50000)",
-            "boost": 0.8,
-        })
+        specs.append({"condition": f"location_city:GEO_DISTANCE({lat}, {lng}, 50000)", "boost": 0.8})
     elif user_latlng:
         lat, lng = user_latlng
-        # Concentric rings for proximity ranking when no city is explicitly named
         for radius_m, boost_val in [(50000, 0.4), (300000, 0.3), (800000, 0.2), (1500000, 0.1)]:
-            specs.append({
-                "condition": f"location_city:GEO_DISTANCE({lat}, {lng}, {radius_m})",
-                "boost": boost_val,
-            })
+            specs.append({"condition": f"location_city:GEO_DISTANCE({lat}, {lng}, {radius_m})", "boost": boost_val})
 
     # 4. Date / Time Window Boost (supports single range OR recurring days like 'every Saturday')
     if intent.time_windows:
@@ -236,56 +230,45 @@ def compile_boost_specs(
             f'({field} >= "{w.start_iso}" AND {field} <= "{w.end_iso}")'
             for w in intent.time_windows
         ]
-        specs.append({
-            "condition": " OR ".join(window_clauses),
-            "boost": 0.9,
-        })
+        specs.append({"condition": " OR ".join(window_clauses), "boost": 0.9})
 
     return specs
 ```
 
-### Why This Pipeline Works in Production
-1. **Handles Hinglish, Vague, and Holiday Queries Automatically**:
-   * `"is weekend delhi mein kya chal raha hai"` $\rightarrow$ extracts `search_query="events"`, `city="Delhi NCR"`, `time_windows=[Sat 00:00 .. Sun 23:59]`.
-   * `"plays on gandhi jayanti holiday"` $\rightarrow$ resolves Gandhi Jayanti to `2026-10-02` and extracts `search_query="play theatre"`.
-   * `"pottery classes every saturday in october"` $\rightarrow$ emits a `TimeWindow` for each Saturday in October, and `compile_boost_specs()` joins them with `OR`.
-2. **Zero Filter Syntax Errors**: Python constructs the `GEO_DISTANCE(...)`, `ANY(...)`, and `>=` expressions from validated fields, so Vertex AI Search never receives malformed filter syntax.
-3. **Low Latency**: `gemini-3.5-flash-lite` provides fast structured extraction, and the Vertex AI Search REST call takes **~150–300ms**.
-
 ---
 
-## 4. Benchmark Evaluation Summary (12 Queries)
+## 7. Benchmark Evaluation Summary (12 Natural-Language Queries)
 
-All 12 queries and their baseline vs. boosted outputs are implemented and logged in [`query_with_boost.py`](./query_with_boost.py):
+All 12 queries and their baseline vs. boosted rankings are implemented in [`query_with_boost.py`](./query_with_boost.py):
 
-| # | User Query | Extracted Fields | Boost Condition Applied (`conditionBoostSpecs`) | Ranking Improvement (Baseline $\rightarrow$ Boosted) |
+| # | User Query | Extracted Intent Fields | Compiled `conditionBoostSpecs` | Ranking Improvement (Baseline $\rightarrow$ Boosted) |
 | :--- | :--- | :--- | :--- | :--- |
-| **Q1** | `open mic next week` | `what: open mic`, `when: next week` | `searchKeywords: ANY("open mic")` + `showtime_start` in `2026-10-12..18` | Nov 22 distractor (`etm100100z`) drops from **#1 $\rightarrow$ #3**; Oct 16 & Oct 14 open mics move to **#1 & #2** |
-| **Q2** | `stand up comedy tonight in pune` | `what: stand up comedy`, `when: tonight`, `where: pune` | `location_city:GEO_DISTANCE(18.5204, 73.8567, 50000)` + `showtime_start` tonight (`2026-10-07`) | Tonight's Pune shows (`etm100104z`, `etm100103z`, `5.2km`) take **#1 & #2**, followed by Pune show (`etm100032z`, `5.2km`) at **#3** ahead of Mumbai (`122.2km`) |
-| **Q3** | `movies releasing this friday` | `what: movie`, `sort: latest`, `when: this friday` | `record_type: ANY("movie")` + `release_date` on `2026-10-09` + `hash_tags: ANY("FRIDAY_RELEASE")` | Older Sep 11 release (`MV00101`) drops from **#1 $\rightarrow$ #3**; Oct 9 Friday releases (`MV00102`, `MV00103`) move to **#1 & #2** |
-| **Q4** | `kids events this sunday morning` | `what: events`, `audience: kids`, `when: sunday morning` | `record_type: ANY("event") AND searchKeywords: ANY("kids", ...)` + `showtime_start` on `2026-10-11T06:00..12:00` | General evening festivals (`etm100113z`, `etm100114z`) drop out of top 4; Sunday morning kids workshops (`etm100106z` 10:00 AM, `etm100105z` 09:30 AM) rise to **#1 & #2** |
-| **Q5** | `late night shows after 10 pm` | `what: movie`, `when: after 10 pm` | `record_type: ANY("movie") AND hash_tags: ANY("LATE_NIGHT_SHOW")` + `showtime_start >= 22:00` | Morning/evening shows (`MV00017` 09:30 AM, `MV00077` 19:15 PM) are replaced at **#1–#4** by post-10 PM shows (`MV00106` 23:15, `MV00105` 22:45, `MV00045` 22:30, `MV00018` 22:30) |
-| **Q6** | `garba nights between 10th and 20th october` | `what: garba night`, `when: 10th to 20th october` | `searchKeywords: ANY("garba", ...)` + `showtime_start` in `2026-10-10..20` | Oct 12 (`etm100108z`) and Oct 17 (`etm100109z`) Garba Nights rank **#1 & #2** ahead of the Oct 28 distractor (`etm100107z`) |
-| **Q7** | `new year eve parties in goa` | `what: party`, `when: new year eve`, `where: goa` | `location_city:GEO_DISTANCE(15.4989, 73.8278, 50000)` + `showtime_start` on `2026-12-31` | Mumbai NYE party (`etm100110z`, `404.8km`) drops from **#1 $\rightarrow$ #3**; Goa NYE parties (`etm100112z`, `etm100111z`, `15.3km`) move to **#1 & #2** |
+| **Q1** | `open mic next week` | `what: open mic`, `when: next week` | `searchKeywords: ANY("open mic")` + `showtime_start` in `2026-10-12..18` | Nov 22 distractor (`etm100100z`) drops **#1 $\rightarrow$ #3**; Oct 16 & Oct 14 open mics move to **#1 & #2** |
+| **Q2** | `stand up comedy tonight in pune` | `what: stand up comedy`, `when: tonight`, `where: pune` | `location_city:GEO_DISTANCE(18.5204, 73.8567, 50000)` + `showtime_start` tonight (`2026-10-07`) | Tonight's Pune shows (`etm100104z`, `etm100103z`, `5.2km`) take **#1 & #2** ahead of Mumbai (`122.2km`) |
+| **Q3** | `movies releasing this friday` | `what: movie`, `when: this friday` | `record_type: ANY("movie")` + `release_date` on `2026-10-09` + `hash_tags: ANY("FRIDAY_RELEASE")` | Older Sep 11 release (`MV00101`) drops **#1 $\rightarrow$ #3**; Oct 9 Friday releases (`MV00102`, `MV00103`) move to **#1 & #2** |
+| **Q4** | `kids events this sunday morning` | `what: events`, `audience: kids`, `when: sunday morning` | `record_type: ANY("event") AND searchKeywords: ANY("kids", ...)` + `showtime_start` on `2026-10-11T06:00..12:00` | General evening festivals drop out of top 4; Sunday morning kids workshops (`etm100106z` 10:00 AM, `etm100105z` 09:30 AM) rise to **#1 & #2** |
+| **Q5** | `late night shows after 10 pm` | `what: movie`, `when: after 10 pm` | `record_type: ANY("movie") AND hash_tags: ANY("LATE_NIGHT_SHOW")` + `showtime_start >= 22:00` | Morning/evening shows replaced at **#1–#4** by post-10 PM shows (`MV00106` 23:15, `MV00105` 22:45, `MV00045` 22:30, `MV00018` 22:30) |
+| **Q6** | `garba nights between 10th and 20th october` | `what: garba night`, `when: 10th to 20th october` | `searchKeywords: ANY("garba", ...)` + `showtime_start` in `2026-10-10..20` | Oct 12 (`etm100108z`) and Oct 17 (`etm100109z`) Garba Nights rank **#1 & #2** ahead of Oct 28 distractor (`etm100107z`) |
+| **Q7** | `new year eve parties in goa` | `what: party`, `when: new year eve`, `where: goa` | `location_city:GEO_DISTANCE(15.4989, 73.8278, 50000)` + `showtime_start` on `2026-12-31` | Mumbai NYE party (`etm100110z`, `404.8km`) drops **#1 $\rightarrow$ #3**; Goa NYE parties (`etm100112z`, `etm100111z`, `15.3km`) move to **#1 & #2** |
 | **Q8** | `is weekend delhi mein kya chal raha hai` | `what: events`, `when: this weekend`, `where: delhi` | `record_type: ANY("event") AND location_city:GEO_DISTANCE(28.6139, 77.2090, 50000)` + `showtime_start` in `2026-10-10..11` | Delhi NCR weekend events (`etm100113z` Oct 10, `etm100114z` Oct 11, `4.2km`) rank **#1 & #2** |
-| **Q9** | `upcoming telugu movies next month` | `what: movie`, `language: telugu`, `when: next month` | `record_type: ANY("movie") AND languages: ANY("Telugu")` + `release_date` in `2026-11-01..30` | Oct 1 release (`MV00107`) drops from **#2 $\rightarrow$ #4**; all three Nov 2026 Telugu releases (`MV00108`, `MV00110`, `MV00109`) take **#1, #2, #3** |
-| **Q10** | `morning shows tomorrow before 11` | `what: movie`, `when: tomorrow before 11` | `record_type: ANY("movie") AND hash_tags: ANY("MORNING_SHOW")` + `showtime_start` in `2026-10-08T06:00..11:00` | Tomorrow's morning shows (`MV00112` at `09:00` and `MV00113` at `10:15` on `2026-10-08`) jump to **#1 & #2** ahead of other dates |
-| **Q11** | `plays on gandhi jayanti holiday` | `what: play`, `when: 2nd october` | `searchKeywords: ANY("play", "theatre", ...)` + `showtime_start` on `2026-10-02` | Oct 25 play (`etm100115z`) drops from **#2 $\rightarrow$ #3**; both Oct 2 Gandhi Jayanti plays (`etm100117z`, `etm100116z`) rank **#1 & #2** |
-| **Q12** | `pottery classes every saturday in october` | `what: pottery workshop`, `when: every saturday in october` | `searchKeywords: ANY("pottery", ...)` + `hash_tags: ANY("SATURDAY_OCTOBER")` / Saturday `showtime_start` ranges | Saturday October pottery workshops (`etm100119z` Oct 10, `etm100120z` Oct 17) rank **#1 & #2** ahead of the Nov 11 Wednesday workshop (`etm100118z`) |
+| **Q9** | `upcoming telugu movies next month` | `what: movie`, `language: telugu`, `when: next month` | `record_type: ANY("movie") AND languages: ANY("Telugu")` + `release_date` in `2026-11-01..30` | Oct 1 release (`MV00107`) drops **#2 $\rightarrow$ #4**; all three Nov 2026 Telugu releases (`MV00108`, `MV00110`, `MV00109`) take **#1, #2, #3** |
+| **Q10** | `morning shows tomorrow before 11` | `what: movie`, `when: tomorrow before 11` | `record_type: ANY("movie") AND hash_tags: ANY("MORNING_SHOW")` + `showtime_start` in `2026-10-08T06:00..11:00` | Tomorrow's morning shows (`MV00112` at `09:00` and `MV00113` at `10:15` on `2026-10-08`) jump to **#1 & #2** |
+| **Q11** | `plays on gandhi jayanti holiday` | `what: play`, `when: 2nd october` | `searchKeywords: ANY("play", "theatre", ...)` + `showtime_start` on `2026-10-02` | Oct 25 play (`etm100115z`) drops **#2 $\rightarrow$ #3**; both Oct 2 Gandhi Jayanti plays (`etm100117z`, `etm100116z`) rank **#1 & #2** |
+| **Q12** | `pottery classes every saturday in october` | `what: pottery workshop`, `when: every saturday in october` | `searchKeywords: ANY("pottery", ...)` + `hash_tags: ANY("SATURDAY_OCTOBER")` / Saturday `showtime_start` ranges | Saturday October pottery workshops (`etm100119z` Oct 10, `etm100120z` Oct 17) rank **#1 & #2** ahead of Nov 11 Wednesday workshop (`etm100118z`) |
 
 ---
 
-## 5. Latency Benchmark Report: Single Query vs. Real-Time Query Resolution
+## 8. Latency Benchmark Report (`Single Query` vs. `Real-Time LLM Pipeline`)
 
-The dedicated benchmark script [`realtime_query_benchmark.py`](./realtime_query_benchmark.py) measures live latencies (after TCP/mTLS connection warm-up) across two execution modes for all 12 queries:
+[`realtime_query_benchmark.py`](./realtime_query_benchmark.py) measures live latencies (after TCP/mTLS warm-up) across two execution modes for all 12 benchmark queries:
 
 1. **Single Query Mode (`Single Query (ms)`)**: Direct Vertex AI Search API call (`engines/{ENGINE_ID}/servingConfigs/default_search:search`) with a pre-built query and `boostSpec`.
 2. **Real-Time Query Resolution Mode (`RT Total E2E (ms)`)**:
-   * **LLM Extract (`LLM Extract (ms)`)**: Live call to `gemini-3.5-flash-lite` (`us-central1`, `thinkingBudget: 0`, structured `responseSchema`) to parse the raw natural-language query into `ExtractedSearchIntent`.
+   * **LLM Extract (`LLM Extract (ms)`)**: Live call to `gemini-3.5-flash-lite` (`thinkingBudget: 0`, structured `responseSchema`) to parse the raw natural-language query into `ExtractedSearchIntent`.
    * **Boost Compile (`Compile (ms)`)**: Deterministic Python `compile_boost_specs(intent)` execution.
    * **RT Search (`RT Search (ms)`)**: Live Vertex AI Search API call using the dynamically extracted `search_query` and compiled `conditionBoostSpecs`.
 
-### 5.1 Per-Query Latency Breakdown
+### 8.1 Per-Query Latency Breakdown (`gemini-3.5-flash-lite`)
 
 | ID | User Query | Single Query (ms) | LLM Extract (ms) | Compile (ms) | RT Search (ms) | RT Total E2E (ms) | Real-Time Top-1 Result |
 | :--- | :--- | ---: | ---: | ---: | ---: | ---: | :--- |
@@ -305,106 +288,91 @@ The dedicated benchmark script [`realtime_query_benchmark.py`](./realtime_query_
 | **P50** | **Median (P50) Latency** | **`289.5 ms`** | — | — | — | **`2393.8 ms`** | — |
 | **P95** | **95th Percentile (P95) Latency** | **`353.7 ms`** | — | — | — | **`2601.9 ms`** | — |
 
-### 5.2 Key Latency Takeaways
-* **Direct Vertex AI Search (`Single Query`)**: Averages **`298.1 ms`** (`P50: 289.5 ms`, `259–354 ms` range from India to `global` / `us-central1` over mTLS).
-* **Deterministic Python Boost Compiler (`compile_boost_specs`)**: Averages **`0.023 ms`** (`23 microseconds`), adding virtually zero overhead.
-* **Real-Time LLM Intent Extraction (`gemini-3.5-flash-lite`)**: Averages **`1955.6 ms`** across the 12 queries over mTLS to `us-central1`.
-* **Accuracy**: All 12 dynamically compiled real-time queries (`Q1`–`Q12`) returned a valid target document at **#1** with zero filter syntax errors.
+### 8.2 Model Comparison: `gemini-2.5-flash-lite` vs. `gemini-3.5-flash-lite`
+
+| Metric | `gemini-2.5-flash-lite` | `gemini-3.5-flash-lite` | Notes |
+| :--- | ---: | ---: | :--- |
+| **Avg LLM Extract (`ms`)** | **`1356.1 ms`** | `1955.6 ms` | `2.5-flash-lite` is ~600 ms faster on structured extraction |
+| **Avg Boost Compile (`ms`)** | `0.021 ms` | `0.023 ms` | Deterministic Python (~20 microseconds) |
+| **Avg Vertex AI Search (`ms`)** | `316.0 ms` | `348.1 ms` | Direct Discovery Engine `:search` call |
+| **Avg Real-Time E2E (`ms`)** | **`1672.1 ms`** | `2303.7 ms` | End-to-end latency from India to `us-central1` / `global` |
+| **Prompt Token Count (`usageMetadata`)** | `1,263 tokens` | `1,633 tokens` | Same prompt + `responseSchema` (Gemma 3 vs. Gemma 4 tokenizer) |
+| **Top-1 Target Match Accuracy** | **12 / 12** | **12 / 12** | `3.5-flash-lite` extracts richer `searchKeywords` + `hash_tags` |
 
 ---
 
-## 6. DataStore Document CRUD Operations (Create, Insert, Modify, Delete)
+## 9. DataStore Document CRUD Guide (Create, Batch Insert, Modify, Delete)
 
-While [`setup_gcs_datastore.py`](./setup_gcs_datastore.py) configures a 4-hour periodic GCS sync (`refreshInterval: 14400s`), real-time changes to individual movies or events (new listings, sold-out status updates, showtime changes, or cancellations) can be applied **immediately** via the Discovery Engine `documents` REST API in [`manage_datastore_documents.py`](./manage_datastore_documents.py).
+While [`setup_gcs_datastore.py`](./setup_gcs_datastore.py) configures a 4-hour periodic GCS sync (`refreshInterval: 14400s`), real-time updates to individual movies or events (new releases, sold-out tags, showtime changes, or cancellations) can be applied **immediately** via the Discovery Engine `documents` REST API implemented in [`manage_datastore_documents.py`](./manage_datastore_documents.py).
 
 **Base Documents Endpoint:**
 ```text
 https://discoveryengine.googleapis.com/v1alpha/projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores/{DATASTORE_ID}/branches/default_branch/documents
 ```
 
-### 6.1 Summary of Document REST Operations
+### 9.1 Document CRUD REST Reference
 
 | Operation | HTTP Method & Endpoint | Payload / Behavior |
 | :--- | :--- | :--- |
-| **Create Single Document** | `POST .../documents?documentId={DOC_ID}` | `{"id": "{DOC_ID}", "schemaId": "default_schema", "structData": {...}}` — Creates a new document immediately (returns `409` if ID exists). |
+| **Create Single Document** | `POST .../documents?documentId={DOC_ID}` | `{"id": "{DOC_ID}", "schemaId": "default_schema", "structData": {...}}` — Creates a new document immediately (falls back to `PATCH` if `409 ALREADY_EXISTS`). |
 | **Batch Insert / Upsert (`<= 100` docs)** | `POST .../documents:import` | `{"inlineSource": {"documents": [...]}, "reconciliationMode": "INCREMENTAL"}` — Atomically inserts or updates up to 100 documents inline without GCS staging. |
 | **Bulk GCS Import** | `POST .../documents:import` | `{"gcsSource": {"inputUris": ["gs://.../*.jsonl"], "dataSchema": "custom"}, "reconciliationMode": "INCREMENTAL" \| "FULL"}` |
-| **Get Document** | `GET .../documents/{DOC_ID}` | Returns full `Document` resource including `structData` and `indexTime`. |
-| **Modify / Update Document** | `PATCH .../documents/{DOC_ID}?allowMissing=true` | `{"id": "{DOC_ID}", "schemaId": "default_schema", "structData": {...}}` — Replaces `structData`. For partial field updates, `GET` existing `structData`, merge the modified fields, and `PATCH`. |
+| **Get Document** | `GET .../documents/{DOC_ID}` | Returns the full `Document` resource including `structData` and `indexTime`. |
+| **Modify / Update Document** | `PATCH .../documents/{DOC_ID}?allowMissing=false` | `{"id": "{DOC_ID}", "schemaId": "default_schema", "structData": {...}}` — Replaces `structData`. For partial field updates, `GET` existing `structData`, merge the modified fields, and `PATCH`. |
 | **Delete Single Document** | `DELETE .../documents/{DOC_ID}` | Immediately removes the document from the DataStore (`GET` afterwards returns `404 NOT_FOUND`). |
 
-### 6.2 Code Examples (`manage_datastore_documents.py`)
+### 9.2 Verified CRUD Workflow in [`manage_datastore_documents.py`](./manage_datastore_documents.py)
 
-#### A. Create a Single Document (`POST .../documents?documentId={id}`)
-```python
-resp = session.post(
-    f"{docs_url}?documentId={doc_id}",
-    json={
-        "id": doc_id,
-        "schemaId": "default_schema",
-        "structData": record_dict,
-    },
-)
-```
+Running `python manage_datastore_documents.py` executes a 3-step live demonstration against the DataStore:
 
-#### B. Batch Insert Multiple Documents Inline (`POST .../documents:import`)
-```python
-resp = session.post(
-    f"{docs_url}:import",
-    json={
-        "inlineSource": {
-            "documents": [
-                {"id": r["id"], "schemaId": "default_schema", "structData": r}
-                for r in records
-            ]
-        },
-        "reconciliationMode": "INCREMENTAL",
-    },
-)
-```
-
-#### C. Modify an Existing Document (`GET` + `PATCH .../documents/{id}`)
-```python
-existing = session.get(f"{docs_url}/{doc_id}").json()
-merged_struct = {**existing.get("structData", {}), **field_updates}
-
-resp = session.patch(
-    f"{docs_url}/{doc_id}?allowMissing=false",
-    json={
-        "id": doc_id,
-        "schemaId": "default_schema",
-        "structData": merged_struct,
-    },
-)
-```
-
-#### D. Delete a Document (`DELETE .../documents/{id}`)
-```python
-resp = session.delete(f"{docs_url}/{doc_id}")
-```
+1. **Step 1 — Insert 10 New Records (`5` Movies `MV00201`–`MV00205` + `5` Events `etm100201z`–`etm100205z`)**:
+   * **Single Create (`POST .../documents?documentId=`)**:
+     * `MV00201` — *Dhurandhar: The Spy Chronicles* (Mumbai)
+     * `MV00202` — *Kantara: A Legend Part 3* (Bengaluru)
+   * **Batch Inline Import (`POST .../documents:import` with `inlineSource`)**:
+     * `MV00203` — *Jana Nayagan: The Leader* (Chennai)
+     * `MV00204` — *Don 3: The Final Heist* (Delhi NCR)
+     * `MV00205` — *SSMB29: Garuda Rising* (Hyderabad)
+     * `etm100201z` — *Coldplay Music of the Spheres World Tour* (Mumbai)
+     * `etm100202z` — *Ed Sheeran Mathematics Tour* (Bengaluru)
+     * `etm100203z` — *Vir Das Mind Fool India Tour* (Delhi NCR)
+     * `etm100204z` — *Zomaland Food & Music Carnival* (Pune)
+     * `etm100205z` — *Sunburn Arena ft. Alan Walker* (Goa)
+2. **Step 2 — Modify 3 Existing Records (`GET` + `PATCH .../documents/{id}`)**:
+   * `MV00001` (*Drishyam: The Conclusion*): Updates `formats` (`['2D']` $\rightarrow$ `['2D', 'IMAX 2D', 'DOLBY ATMOS']`) and appends `'IMAX_SPECIAL'` to `hash_tags`.
+   * `MV00201` (*Dhurandhar: The Spy Chronicles*): Updates `languages` (`['Hindi']` $\rightarrow$ `['Hindi', 'English', 'Telugu']`), `formats` (`['2D', 'IMAX 2D', '4DX']`), and appends `'SELLING_FAST'` to `hash_tags`.
+   * `etm100201z` (*Coldplay World Tour - Mumbai*): Extends `duration` (`180` $\rightarrow$ `210` mins) and appends `'EXTRA_SHOW_ADDED'` to `hash_tags`.
+3. **Step 3 — Delete 3 Records (`DELETE .../documents/{id}`) & Verify `404 NOT_FOUND`**:
+   * Deletes `MV00204`, `MV00205`, and `etm100205z` and verifies via `GET` that each returns `404 NOT_FOUND`.
 
 ---
 
-## 7. Usage
+## 10. Quickstart & CLI Usage
 
 ```bash
-# 1. Regenerate the 234 sample records (sample_metadata_200.json & sample_metadata_200.jsonl)
+# 1. Configure local project & datastore settings
+cp config.example.json config.local.json
+
+# 2. Generate the 234 sample movie & event records (sample_metadata_200.json)
 python generate_sample_data.py
 
-# 2. Run the full GEO_DISTANCE + 12-query static benchmark suite
-python query_with_boost.py
+# 3. Upload JSONL to GCS & provision the DataStore (4-hour periodic sync) + Search Engine
+python setup_gcs_datastore.py
 
-# 3. Run the Single-Query vs. Real-Time Query Resolution latency benchmark
-python realtime_query_benchmark.py
-
-# 4. Run the Document CRUD workflow (inserts 10 records, modifies 3 existing records, deletes 3 records)
+# 4. Run the real-time Document CRUD workflow (insert 10, modify 3, delete 3)
 python manage_datastore_documents.py
 
-# 5. Fetch or delete specific documents by ID
+# 5. Inspect or delete individual documents by ID
 python manage_datastore_documents.py --get MV00201
 python manage_datastore_documents.py --delete MV00204 MV00205 etm100205z
 
-# 6. Run a custom ad-hoc query with a single boost condition
+# 6. Run the full GEO_DISTANCE + 12-query static boost evaluation suite
+python query_with_boost.py
+
+# 7. Run the Single-Query vs. Real-Time LLM Query Resolution latency benchmark
+python realtime_query_benchmark.py
+
+# 8. Run an ad-hoc search query with a custom boost condition
 python query_with_boost.py \
   -q "Welcome to the Jungle" \
   -c "location_city:GEO_DISTANCE(13.0827, 80.2707, 100000)" \
