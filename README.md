@@ -313,7 +313,79 @@ The dedicated benchmark script [`realtime_query_benchmark.py`](./realtime_query_
 
 ---
 
-## 6. Usage
+## 6. DataStore Document CRUD Operations (Create, Insert, Modify, Delete)
+
+While [`setup_gcs_datastore.py`](./setup_gcs_datastore.py) configures a 4-hour periodic GCS sync (`refreshInterval: 14400s`), real-time changes to individual movies or events (new listings, sold-out status updates, showtime changes, or cancellations) can be applied **immediately** via the Discovery Engine `documents` REST API in [`manage_datastore_documents.py`](./manage_datastore_documents.py).
+
+**Base Documents Endpoint:**
+```text
+https://discoveryengine.googleapis.com/v1alpha/projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores/{DATASTORE_ID}/branches/default_branch/documents
+```
+
+### 6.1 Summary of Document REST Operations
+
+| Operation | HTTP Method & Endpoint | Payload / Behavior |
+| :--- | :--- | :--- |
+| **Create Single Document** | `POST .../documents?documentId={DOC_ID}` | `{"id": "{DOC_ID}", "schemaId": "default_schema", "structData": {...}}` — Creates a new document immediately (returns `409` if ID exists). |
+| **Batch Insert / Upsert (`<= 100` docs)** | `POST .../documents:import` | `{"inlineSource": {"documents": [...]}, "reconciliationMode": "INCREMENTAL"}` — Atomically inserts or updates up to 100 documents inline without GCS staging. |
+| **Bulk GCS Import** | `POST .../documents:import` | `{"gcsSource": {"inputUris": ["gs://.../*.jsonl"], "dataSchema": "custom"}, "reconciliationMode": "INCREMENTAL" \| "FULL"}` |
+| **Get Document** | `GET .../documents/{DOC_ID}` | Returns full `Document` resource including `structData` and `indexTime`. |
+| **Modify / Update Document** | `PATCH .../documents/{DOC_ID}?allowMissing=true` | `{"id": "{DOC_ID}", "schemaId": "default_schema", "structData": {...}}` — Replaces `structData`. For partial field updates, `GET` existing `structData`, merge the modified fields, and `PATCH`. |
+| **Delete Single Document** | `DELETE .../documents/{DOC_ID}` | Immediately removes the document from the DataStore (`GET` afterwards returns `404 NOT_FOUND`). |
+
+### 6.2 Code Examples (`manage_datastore_documents.py`)
+
+#### A. Create a Single Document (`POST .../documents?documentId={id}`)
+```python
+resp = session.post(
+    f"{docs_url}?documentId={doc_id}",
+    json={
+        "id": doc_id,
+        "schemaId": "default_schema",
+        "structData": record_dict,
+    },
+)
+```
+
+#### B. Batch Insert Multiple Documents Inline (`POST .../documents:import`)
+```python
+resp = session.post(
+    f"{docs_url}:import",
+    json={
+        "inlineSource": {
+            "documents": [
+                {"id": r["id"], "schemaId": "default_schema", "structData": r}
+                for r in records
+            ]
+        },
+        "reconciliationMode": "INCREMENTAL",
+    },
+)
+```
+
+#### C. Modify an Existing Document (`GET` + `PATCH .../documents/{id}`)
+```python
+existing = session.get(f"{docs_url}/{doc_id}").json()
+merged_struct = {**existing.get("structData", {}), **field_updates}
+
+resp = session.patch(
+    f"{docs_url}/{doc_id}?allowMissing=false",
+    json={
+        "id": doc_id,
+        "schemaId": "default_schema",
+        "structData": merged_struct,
+    },
+)
+```
+
+#### D. Delete a Document (`DELETE .../documents/{id}`)
+```python
+resp = session.delete(f"{docs_url}/{doc_id}")
+```
+
+---
+
+## 7. Usage
 
 ```bash
 # 1. Regenerate the 234 sample records (sample_metadata_200.json & sample_metadata_200.jsonl)
@@ -325,10 +397,16 @@ python query_with_boost.py
 # 3. Run the Single-Query vs. Real-Time Query Resolution latency benchmark
 python realtime_query_benchmark.py
 
-# 4. Run a custom ad-hoc query with a single boost condition
+# 4. Run the Document CRUD workflow (inserts 10 records, modifies 3 existing records, deletes 3 records)
+python manage_datastore_documents.py
+
+# 5. Fetch or delete specific documents by ID
+python manage_datastore_documents.py --get MV00201
+python manage_datastore_documents.py --delete MV00204 MV00205 etm100205z
+
+# 6. Run a custom ad-hoc query with a single boost condition
 python query_with_boost.py \
   -q "Welcome to the Jungle" \
   -c "location_city:GEO_DISTANCE(13.0827, 80.2707, 100000)" \
   -b 0.8
 ```
-
