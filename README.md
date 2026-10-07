@@ -35,6 +35,7 @@ This repository demonstrates how to:
 | [`generate_sample_data.py`](./generate_sample_data.py) | Deterministic dataset generator producing **234 structured entertainment records** (113 movies + 121 live events across 8 Indian cities) in [`sample_metadata_200.json`](./sample_metadata_200.json). |
 | [`setup_gcs_datastore.py`](./setup_gcs_datastore.py) | Converts JSON to JSONL, uploads to GCS, provisions the Discovery Engine GCS DataConnector (`PERIODIC` 4-hour sync) and Enterprise Search Engine, and verifies live search. |
 | [`watch_gcs_and_sync.py`](./watch_gcs_and_sync.py) | Watches `gs://{GCS_BUCKET}/{GCS_FOLDER}/*.jsonl` for newly uploaded or modified `.jsonl` files (tracking GCS `generation` & `md5Hash`) and immediately triggers a Vertex AI Search DataStore import + connector sync. |
+| [`cloud_function_gcs_sync/`](./cloud_function_gcs_sync/) | Serverless **2nd-Gen Cloud Run Function** (`main.py`, `requirements.txt`, `deploy.sh`) triggered by Eventarc (`google.cloud.storage.object.v1.finalized`) whenever a `.jsonl` file is uploaded to GCS. |
 | [`manage_datastore_documents.py`](./manage_datastore_documents.py) | Real-time Document CRUD script demonstrating single creation (`POST`), batch inline import (`POST :import`), partial field modification (`GET` + `PATCH`), and deletion (`DELETE`). |
 | [`query_with_boost.py`](./query_with_boost.py) | Evaluates concentric `GEO_DISTANCE` proximity boosting and runs all 12 natural-language benchmark queries comparing baseline vs. boosted rankings. |
 | [`realtime_query_benchmark.py`](./realtime_query_benchmark.py) | End-to-end latency benchmark comparing **Single Query (Direct Search)** vs. **Real-Time Query Resolution (Gemini 3.5 Flash-Lite + Python Boost Compiler + Search)**. |
@@ -362,13 +363,18 @@ To avoid waiting for the 4-hour periodic schedule when new `.jsonl` files are up
    * Calls `POST .../branches/default_branch/documents:import` with `gcsSource.inputUris` set to the newly uploaded/changed `gs://.../*.jsonl` URI(s) (`reconciliationMode: "INCREMENTAL"`).
    * Calls `POST .../collections/{COLLECTION_ID}/dataConnector:startConnectorRun` (`HTTP 200`) to trigger a fresh run on the parent GCS DataConnector.
    * Polls the Long-Running Operation (`LRO`) to completion (~`0.8s` for delta files) and records the synced `generation` in `.gcs_sync_state.json`.
-3. **Serverless Eventarc / Cloud Functions Support (`handle_gcs_finalize_event`)**:
-   * Includes a ready-to-deploy `google.cloud.storage.object.v1.finalized` Cloud Run / Cloud Functions entrypoint for zero-polling event-driven syncs.
+3. **Serverless 2nd-Gen Cloud Function ([`cloud_function_gcs_sync/`](./cloud_function_gcs_sync/))**:
+   * [`cloud_function_gcs_sync/main.py`](./cloud_function_gcs_sync/main.py): `@functions_framework.cloud_event` entrypoint (`sync_gcs_to_datastore`) triggered by Eventarc (`google.cloud.storage.object.v1.finalized`) whenever a `.jsonl` object is uploaded to `gs://{GCS_BUCKET}/{GCS_FOLDER}/`.
+   * [`cloud_function_gcs_sync/deploy.sh`](./cloud_function_gcs_sync/deploy.sh): One-command deployment script that configures Eventarc GCS permissions and deploys the 2nd-Gen Cloud Function using settings from `config.local.json`.
 
-### Running the GCS Watcher
+### Running the Polling Watcher or Deploying the Cloud Function
 
 ```bash
-# Continuous watcher: polls gs://{GCS_BUCKET}/{GCS_FOLDER}/ every 15 seconds
+# Option A: Serverless 2nd-Gen Cloud Function (Eventarc GCS Finalize Trigger)
+python cloud_function_gcs_sync/main.py --test-local
+./cloud_function_gcs_sync/deploy.sh
+
+# Option B: Continuous local/VM watcher (polls gs://{GCS_BUCKET}/{GCS_FOLDER}/ every 15 seconds)
 python watch_gcs_and_sync.py --interval 15
 
 # Single-pass scan: checks GCS once, syncs any new/modified .jsonl files, and exits
