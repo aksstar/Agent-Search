@@ -21,7 +21,8 @@ This repository demonstrates how to:
 7. [Benchmark Evaluation Summary (12 Natural-Language Queries)](#7-benchmark-evaluation-summary-12-natural-language-queries)
 8. [Latency Benchmark Report (`Single Query` vs. `Real-Time LLM Pipeline`)](#8-latency-benchmark-report-single-query-vs-real-time-llm-pipeline)
 9. [DataStore Document CRUD Guide (Create, Batch Insert, Modify, Delete)](#9-datastore-document-crud-guide-create-batch-insert-modify-delete)
-10. [Quickstart & CLI Usage](#10-quickstart--cli-usage)
+10. [Automated GCS Folder Watcher & Instant DataStore Sync](#10-automated-gcs-folder-watcher--instant-datastore-sync)
+11. [Quickstart & CLI Usage](#11-quickstart--cli-usage)
 
 ---
 
@@ -33,6 +34,7 @@ This repository demonstrates how to:
 | [`config.example.json`](./config.example.json) | Template configuration file containing placeholder GCP project, GCS, Discovery Engine, and Gemini model settings. |
 | [`generate_sample_data.py`](./generate_sample_data.py) | Deterministic dataset generator producing **234 structured entertainment records** (113 movies + 121 live events across 8 Indian cities) in [`sample_metadata_200.json`](./sample_metadata_200.json). |
 | [`setup_gcs_datastore.py`](./setup_gcs_datastore.py) | Converts JSON to JSONL, uploads to GCS, provisions the Discovery Engine GCS DataConnector (`PERIODIC` 4-hour sync) and Enterprise Search Engine, and verifies live search. |
+| [`watch_gcs_and_sync.py`](./watch_gcs_and_sync.py) | Watches `gs://{GCS_BUCKET}/{GCS_FOLDER}/*.jsonl` for newly uploaded or modified `.jsonl` files (tracking GCS `generation` & `md5Hash`) and immediately triggers a Vertex AI Search DataStore import + connector sync. |
 | [`manage_datastore_documents.py`](./manage_datastore_documents.py) | Real-time Document CRUD script demonstrating single creation (`POST`), batch inline import (`POST :import`), partial field modification (`GET` + `PATCH`), and deletion (`DELETE`). |
 | [`query_with_boost.py`](./query_with_boost.py) | Evaluates concentric `GEO_DISTANCE` proximity boosting and runs all 12 natural-language benchmark queries comparing baseline vs. boosted rankings. |
 | [`realtime_query_benchmark.py`](./realtime_query_benchmark.py) | End-to-end latency benchmark comparing **Single Query (Direct Search)** vs. **Real-Time Query Resolution (Gemini 3.5 Flash-Lite + Python Boost Compiler + Search)**. |
@@ -47,7 +49,8 @@ flowchart TB
     subgraph Ingestion["1. Ingestion & Real-Time Index Maintenance"]
         direction LR
         GEN["generate_sample_data.py\n(234 Movies & Events)"] --> JSONL["GCS Bucket (*.jsonl)\n4-Hour Periodic Sync"]
-        JSONL --> DS[("Vertex AI Search\nDataStore & Engine")]
+        JSONL --> WATCH["watch_gcs_and_sync.py\nDetects New/Updated GCS Files\n(generation / md5Hash)"]
+        WATCH --> DS[("Vertex AI Search\nDataStore & Engine")]
         CRUD["manage_datastore_documents.py\nReal-Time REST CRUD\n(POST / PATCH / DELETE)"] --> DS
     end
 
@@ -347,7 +350,38 @@ Running `python manage_datastore_documents.py` executes a 3-step live demonstrat
 
 ---
 
-## 10. Quickstart & CLI Usage
+## 10. Automated GCS Folder Watcher & Instant DataStore Sync
+
+To avoid waiting for the 4-hour periodic schedule when new `.jsonl` files are uploaded to `gs://{GCS_BUCKET}/{GCS_FOLDER}/`, [`watch_gcs_and_sync.py`](./watch_gcs_and_sync.py) monitors the GCS folder and immediately triggers an incremental DataStore sync whenever a new or updated `.jsonl` object appears.
+
+### How It Works
+1. **Object Generation Tracking (`list_gcs_jsonl_objects` & `.gcs_sync_state.json`)**:
+   * Inspects all `*.jsonl` objects inside `gs://{GCS_BUCKET}/{GCS_FOLDER}/` and compares each object's `generation` and `md5Hash` against the local `.gcs_sync_state.json` state file.
+   * Detects both **brand-new file uploads (`NEW_FILE`)** and **overwritten files (`UPDATED_FILE`)** while skipping already-synced object generations.
+2. **Immediate Incremental GCS Import + Connector Sync (`sync_gcs_uris_to_datastore`)**:
+   * Calls `POST .../branches/default_branch/documents:import` with `gcsSource.inputUris` set to the newly uploaded/changed `gs://.../*.jsonl` URI(s) (`reconciliationMode: "INCREMENTAL"`).
+   * Calls `POST .../collections/{COLLECTION_ID}/dataConnector:startConnectorRun` (`HTTP 200`) to trigger a fresh run on the parent GCS DataConnector.
+   * Polls the Long-Running Operation (`LRO`) to completion (~`0.8s` for delta files) and records the synced `generation` in `.gcs_sync_state.json`.
+3. **Serverless Eventarc / Cloud Functions Support (`handle_gcs_finalize_event`)**:
+   * Includes a ready-to-deploy `google.cloud.storage.object.v1.finalized` Cloud Run / Cloud Functions entrypoint for zero-polling event-driven syncs.
+
+### Running the GCS Watcher
+
+```bash
+# Continuous watcher: polls gs://{GCS_BUCKET}/{GCS_FOLDER}/ every 15 seconds
+python watch_gcs_and_sync.py --interval 15
+
+# Single-pass scan: checks GCS once, syncs any new/modified .jsonl files, and exits
+python watch_gcs_and_sync.py --once
+
+# End-to-end simulation: uploads delta_new_upload.jsonl (MV00301 & etm100301z) to GCS,
+# detects the new file, triggers DataStore sync, and verifies HTTP 200 on the indexed records
+python watch_gcs_and_sync.py --simulate-upload
+```
+
+---
+
+## 11. Quickstart & CLI Usage
 
 ```bash
 # 1. Configure local project & datastore settings
@@ -359,22 +393,27 @@ python generate_sample_data.py
 # 3. Upload JSONL to GCS & provision the DataStore (4-hour periodic sync) + Search Engine
 python setup_gcs_datastore.py
 
-# 4. Run the real-time Document CRUD workflow (insert 10, modify 3, delete 3)
+# 4. Watch the GCS folder for new .jsonl uploads & trigger immediate DataStore sync
+python watch_gcs_and_sync.py --simulate-upload
+python watch_gcs_and_sync.py --interval 15
+
+# 5. Run the real-time Document CRUD workflow (insert 10, modify 3, delete 3)
 python manage_datastore_documents.py
 
-# 5. Inspect or delete individual documents by ID
+# 6. Inspect or delete individual documents by ID
 python manage_datastore_documents.py --get MV00201
 python manage_datastore_documents.py --delete MV00204 MV00205 etm100205z
 
-# 6. Run the full GEO_DISTANCE + 12-query static boost evaluation suite
+# 7. Run the full GEO_DISTANCE + 12-query static boost evaluation suite
 python query_with_boost.py
 
-# 7. Run the Single-Query vs. Real-Time LLM Query Resolution latency benchmark
+# 8. Run the Single-Query vs. Real-Time LLM Query Resolution latency benchmark
 python realtime_query_benchmark.py
 
-# 8. Run an ad-hoc search query with a custom boost condition
+# 9. Run an ad-hoc search query with a custom boost condition
 python query_with_boost.py \
   -q "Welcome to the Jungle" \
   -c "location_city:GEO_DISTANCE(13.0827, 80.2707, 100000)" \
   -b 0.8
 ```
+

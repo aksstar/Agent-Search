@@ -6,3 +6,6 @@ config.local.json
 .venv/
 venv/
 .DS_Store
+.gcs_sync_state.json
+*.jsonl
+
