@@ -584,3 +584,51 @@ if __name__ == "__main__":
             print(f"Deleted '{did}': {ok}")
     else:
         run_crud_demo()
+
+# ==============================================================================
+# EXECUTION OUTPUT (`python manage_datastore_documents.py`)
+# ==============================================================================
+# Connected to Discovery Engine DataStore: sample-data-connector_gcs_store (Project: your-gcp-project-id)
+#
+# ===============================================================================================
+# STEP 1: Inserting 10 New Records (5 Movies MV00201..MV00205 + 5 Events etm100201z..etm100205z)
+# ===============================================================================================
+#   [Single Create POST] MV00201      | (movie) Dhurandhar: The Spy Chronicles — Mumbai
+#   [Single Create POST] MV00202      | (movie) Kantara: A Legend Part 3 — Bengaluru
+#   [Batch Import POST]  Imported 8 documents via inlineSource (successCount=8, failureCount=0)
+#     -> MV00203      | (movie) Jana Nayagan: The Leader — Chennai
+#     -> MV00204      | (movie) Don 3: The Final Heist — Delhi NCR
+#     -> MV00205      | (movie) SSMB29: Garuda Rising — Hyderabad
+#     -> etm100201z   | (event) COLDPLAY MUSIC OF THE SPHERES WORLD TOUR - MUMBAI — Mumbai
+#     -> etm100202z   | (event) ED SHEERAN MATHEMATICS TOUR - BENGALURU — Bengaluru
+#     -> etm100203z   | (event) VIR DAS MIND FOOL INDIA TOUR - DELHI NCR — Delhi NCR
+#     -> etm100204z   | (event) ZOMALAND FOOD & MUSIC CARNIVAL - PUNE — Pune
+#     -> etm100205z   | (event) SUNBURN ARENA FT. ALAN WALKER - GOA — Goa
+#
+# ===============================================================================================
+# STEP 2: Modifying Existing Records in DataStore (GET + PATCH)
+# ===============================================================================================
+#
+#   [PATCH] Document 'MV00001' (Drishyam: The Conclusion):
+#     - formats: ['2D']  -->  ['2D', 'IMAX 2D', 'DOLBY ATMOS']
+#     - hash_tags: ['LIVE_IN_CINEMAS', 'FAMILY_ENTERTAINER', 'LATE_NIGHT_SHOW']  -->  ['LIVE_IN_CINEMAS', 'FAMILY_ENTERTAINER', 'LATE_NIGHT_SHOW', 'IMAX_SPECIAL']
+#
+#   [PATCH] Document 'MV00201' (Dhurandhar: The Spy Chronicles):
+#     - languages: ['Hindi']  -->  ['Hindi', 'English', 'Telugu']
+#     - hash_tags: ['NEW_RELEASE', 'FRIDAY_RELEASE', 'BLOCKBUSTER']  -->  ['NEW_RELEASE', 'FRIDAY_RELEASE', 'BLOCKBUSTER', 'SELLING_FAST']
+#     - formats: ['2D', 'IMAX 2D']  -->  ['2D', 'IMAX 2D', '4DX']
+#
+#   [PATCH] Document 'etm100201z' (COLDPLAY MUSIC OF THE SPHERES WORLD TOUR - MUMBAI):
+#     - duration: 180  -->  210
+#     - hash_tags: ['NEXT_WEEK', 'MUST_WATCH']  -->  ['NEXT_WEEK', 'MUST_WATCH', 'EXTRA_SHOW_ADDED']
+#
+# ===============================================================================================
+# STEP 3: Deleting Records from DataStore (DELETE) & Verifying Removal
+# ===============================================================================================
+#   [DELETE] MV00204      | deleted=True | post-delete GET: 404 NOT_FOUND (Verified Deleted)
+#   [DELETE] MV00205      | deleted=True | post-delete GET: 404 NOT_FOUND (Verified Deleted)
+#   [DELETE] etm100205z   | deleted=True | post-delete GET: 404 NOT_FOUND (Verified Deleted)
+#
+# ===============================================================================================
+# Summary: 10 inserted, 3 modified, 3 deleted (7 net new records active: MV00201..MV00203, etm100201z..etm100204z)
+# ===============================================================================================
