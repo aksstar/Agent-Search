@@ -292,17 +292,6 @@ All 12 queries and their baseline vs. boosted rankings are implemented in [`quer
 | **P50** | **Median (P50) Latency** | **`289.5 ms`** | — | — | — | **`2393.8 ms`** | — |
 | **P95** | **95th Percentile (P95) Latency** | **`353.7 ms`** | — | — | — | **`2601.9 ms`** | — |
 
-### 8.2 Model Comparison: `gemini-2.5-flash-lite` vs. `gemini-3.5-flash-lite`
-
-| Metric | `gemini-2.5-flash-lite` | `gemini-3.5-flash-lite` | Notes |
-| :--- | ---: | ---: | :--- |
-| **Avg LLM Extract (`ms`)** | **`1356.1 ms`** | `1955.6 ms` | `2.5-flash-lite` is ~600 ms faster on structured extraction |
-| **Avg Boost Compile (`ms`)** | `0.021 ms` | `0.023 ms` | Deterministic Python (~20 microseconds) |
-| **Avg Vertex AI Search (`ms`)** | `316.0 ms` | `348.1 ms` | Direct Discovery Engine `:search` call |
-| **Avg Real-Time E2E (`ms`)** | **`1672.1 ms`** | `2303.7 ms` | End-to-end latency from India to `us-central1` / `global` |
-| **Prompt Token Count (`usageMetadata`)** | `1,263 tokens` | `1,633 tokens` | Same prompt + `responseSchema` (Gemma 3 vs. Gemma 4 tokenizer) |
-| **Top-1 Target Match Accuracy** | **12 / 12** | **12 / 12** | `3.5-flash-lite` extracts richer `searchKeywords` + `hash_tags` |
-
 ---
 
 ## 9. DataStore Document CRUD Guide (Create, Batch Insert, Modify, Delete)
