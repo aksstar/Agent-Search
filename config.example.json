@@ -1,0 +1,18 @@
+{
+  "project_id": "your-gcp-project-id",
+  "project_number": "000000000000",
+  "location": "global",
+  "vertex_ai_location": "us-central1",
+  "gcs_bucket": "your-gcs-bucket-name",
+  "gcs_folder": "sample_search_data",
+  "local_json_file": "sample_metadata_200.json",
+  "local_jsonl_file": "sample_metadata_200.jsonl",
+  "collection_id": "sample-data-connector",
+  "collection_display_name": "Entertainment Sample Data",
+  "datastore_id": "sample-data-connector_gcs_store",
+  "engine_id": "your-search-engine-id",
+  "engine_display_name": "Entertainment Search App",
+  "refresh_interval_seconds": "14400s",
+  "gcloud_account": "",
+  "gemini_model": "gemini-3.5-flash-lite"
+}
