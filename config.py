@@ -1,4 +1,4 @@
-"""Centralized configuration loader for Vertex AI Search & Gemini scripts.
+"""Centralized configuration loader for Agent Search & Gemini scripts.
 
 Reads settings from environment variables or a local gitignored `config.local.json` file,
 falling back to safe generic placeholders so no project IDs, app names, or credentials

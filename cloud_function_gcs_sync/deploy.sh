@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Deploy 2nd-Gen Cloud Run Function with Eventarc GCS Trigger
-# Automatically triggers Vertex AI Search DataStore sync on any new .jsonl upload
+# Automatically triggers Agent Search DataStore sync on any new .jsonl upload
 # ==============================================================================
 set -euo pipefail
 

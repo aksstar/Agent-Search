@@ -1,4 +1,4 @@
-"""Create, Insert (Batch & Single), Modify (Patch), and Delete documents in Vertex AI Search DataStore.
+"""Create, Insert (Batch & Single), Modify (Patch), and Delete documents in Agent Search DataStore.
 
 Demonstrates real-time Document CRUD operations against the Discovery Engine REST API:
 1. Insert 10 new records (5 movies + 5 live events) using:
@@ -37,7 +37,7 @@ def get_documents_base_url(base_url: str) -> str:
 
 
 # ==============================================================================
-# Core Document CRUD Functions (Vertex AI Search / Discovery Engine REST API)
+# Core Document CRUD Functions (Agent Search / Discovery Engine REST API)
 # ==============================================================================
 def get_document(
     session: AuthorizedSession, base_url: str, doc_id: str
@@ -142,7 +142,7 @@ def modify_document(
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Modify specific fields of an existing document (`GET` + `PATCH .../documents/{doc_id}`).
 
-    Note: In Vertex AI Search, `PATCH` replaces the full `structData` object.
+    Note: In Agent Search, `PATCH` replaces the full `structData` object.
     To perform a partial field update safely, we first `GET` the existing document,
     merge `updates` into its `structData`, and then `PATCH` the merged document.
 
@@ -558,7 +558,7 @@ def run_crud_demo() -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Insert, Modify, and Delete documents in Vertex AI Search DataStore."
+        description="Insert, Modify, and Delete documents in Agent Search DataStore."
     )
     parser.add_argument(
         "--get",

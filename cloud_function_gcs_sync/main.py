@@ -1,4 +1,4 @@
-"""Google Cloud Function (2nd Gen) — Event-Driven GCS to Vertex AI Search DataStore Sync.
+"""Google Cloud Function (2nd Gen) — Event-Driven GCS to Agent Search DataStore Sync.
 
 Triggered automatically by Eventarc whenever a file is uploaded or overwritten in the
 configured GCS bucket (`google.cloud.storage.object.v1.finalized`).
@@ -127,7 +127,7 @@ def process_gcs_event_payload(data: Dict[str, Any]) -> Dict[str, Any]:
             f"Discovery Engine documents:import failed (HTTP {import_resp.status_code}): {import_resp.text}"
         )
     import_lro = import_resp.json().get("name", "")
-    print(f"Started Vertex AI Search Import LRO: {import_lro}")
+    print(f"Started Agent Search Import LRO: {import_lro}")
 
     # 2. Trigger parent DataConnector sync run (`startConnectorRun`)
     connector_url = (

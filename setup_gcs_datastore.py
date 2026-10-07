@@ -63,7 +63,7 @@ def get_discovery_session() -> tuple[AuthorizedSession, str]:
 
 
 def convert_to_jsonl(input_json_path: str, output_jsonl_path: str) -> int:
-    """Convert sample metadata JSON (movies + events) into newline-delimited JSONL for Vertex AI Search."""
+    """Convert sample metadata JSON (movies + events) into newline-delimited JSONL for Agent Search."""
     with open(input_json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 

@@ -1,4 +1,4 @@
-"""Watch a GCS folder for new or updated JSONL files and trigger a Vertex AI Search DataStore sync.
+"""Watch a GCS folder for new or updated JSONL files and trigger an Agent Search DataStore sync.
 
 Supports two execution patterns:
 1. Continuous / Single-Pass GCS Watcher (`watch_gcs_and_sync.py`):
@@ -148,7 +148,7 @@ def detect_changed_gcs_files(
 
 
 # ==============================================================================
-# 3. Trigger Vertex AI Search DataStore Sync (GCS Import + Connector Run)
+# 3. Trigger Agent Search DataStore Sync (GCS Import + Connector Run)
 # ==============================================================================
 def sync_gcs_uris_to_datastore(
     session: AuthorizedSession,
@@ -158,7 +158,7 @@ def sync_gcs_uris_to_datastore(
     trigger_connector_run: bool = True,
     wait_for_lro: bool = True,
 ) -> Dict[str, Any]:
-    """Trigger an immediate Vertex AI Search DataStore sync for the given `gs://` JSONL URI(s).
+    """Trigger an immediate Agent Search DataStore sync for the given `gs://` JSONL URI(s).
 
     1. Calls `POST .../branches/default_branch/documents:import` with `gcsSource.inputUris`
        to immediately index the newly uploaded or modified `.jsonl` file(s).
@@ -179,7 +179,7 @@ def sync_gcs_uris_to_datastore(
     }
 
     print(
-        f"Triggering Vertex AI Search GCS Import ({reconciliation_mode}) for {len(gcs_uris)} file(s):"
+        f"Triggering Agent Search GCS Import ({reconciliation_mode}) for {len(gcs_uris)} file(s):"
     )
     for u in gcs_uris:
         print(f"  -> {u}")
@@ -434,7 +434,7 @@ def simulate_new_file_upload_and_sync() -> None:
         f"/collections/default_collection/dataStores/{DATASTORE_ID}"
         f"/branches/default_branch/documents"
     )
-    print("\nVerifying synced documents in Vertex AI Search DataStore:")
+    print("\nVerifying synced documents in Agent Search DataStore:")
     for rec in delta_records:
         doc_id = rec["id"]
         doc_resp = session.get(f"{docs_base}/{doc_id}")
@@ -475,7 +475,7 @@ def run_watcher_loop(interval_seconds: int = 15, reconciliation_mode: str = "INC
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Watch GCS folder for new/updated JSONL uploads and trigger Vertex AI Search DataStore sync."
+        description="Watch GCS folder for new/updated JSONL uploads and trigger Agent Search DataStore sync."
     )
     parser.add_argument(
         "--once",
@@ -492,7 +492,7 @@ if __name__ == "__main__":
         "--mode",
         choices=["INCREMENTAL", "FULL"],
         default="INCREMENTAL",
-        help="Reconciliation mode for Vertex AI Search import (default: INCREMENTAL).",
+        help="Reconciliation mode for Agent Search import (default: INCREMENTAL).",
     )
     parser.add_argument(
         "--simulate-upload",
@@ -521,7 +521,7 @@ if __name__ == "__main__":
 #
 # [2026-10-07T10:48:58Z] Detected 1 new/updated .jsonl file(s) in gs://your-gcs-bucket-name/sample_search_data/:
 #   * [NEW_FILE] gs://your-gcs-bucket-name/sample_search_data/delta_new_upload.jsonl (generation=1791370136421307, size=1755 bytes)
-# Triggering Vertex AI Search GCS Import (INCREMENTAL) for 1 file(s):
+# Triggering Agent Search GCS Import (INCREMENTAL) for 1 file(s):
 #   -> gs://your-gcs-bucket-name/sample_search_data/delta_new_upload.jsonl
 # Started Import LRO: projects/000000000000/locations/global/collections/default_collection/dataStores/sample-data-connector_gcs_store/branches/0/operations/import-documents-9108705056319265354
 # Triggered DataConnector sync run on 'sample-data-connector' (HTTP 200).
@@ -531,7 +531,7 @@ if __name__ == "__main__":
 # Running follow-up scan to confirm idempotency (already-synced generation skipped):
 # [2026-10-07T10:49:08Z] Checked gs://your-gcs-bucket-name/sample_search_data/ (2 .jsonl file(s)) — no new or modified files.
 #
-# Verifying synced documents in Vertex AI Search DataStore:
+# Verifying synced documents in Agent Search DataStore:
 #   [VERIFIED HTTP 200] MV00301      | (movie) Border 2: The Battalion — Delhi NCR
 #   [VERIFIED HTTP 200] etm100301z   | (event) RAHUL DUA LIVE STANDUP TOUR - HYDERABAD — Hyderabad
 # ===============================================================================================

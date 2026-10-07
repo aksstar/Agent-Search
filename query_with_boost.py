@@ -1,4 +1,4 @@
-"""Query the Vertex AI Search App using the REST API with boostSpec (conditionBoostSpecs).
+"""Query the Agent Search App using the REST API with boostSpec (conditionBoostSpecs).
 
 Reference:
 https://cloud.google.com/generative-ai-app-builder/docs/boost-search-results
@@ -30,7 +30,7 @@ def search_with_boost(
     filter_expr: str = "",
     page_size: int = 10,
 ) -> dict:
-    """Execute a REST API :search call against the configured Vertex AI Search Engine with boostSpec."""
+    """Execute a REST API :search call against the configured Agent Search Engine with boostSpec."""
     global _CACHED_SESSION
     if _CACHED_SESSION is None:
         _CACHED_SESSION = get_discovery_session()
@@ -401,7 +401,7 @@ BENCHMARK_QUERIES = [
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Query Vertex AI Search App via REST API with boostSpec"
+        description="Query Agent Search App via REST API with boostSpec"
     )
     parser.add_argument("-q", "--query", type=str, default="", help="Custom search query")
     parser.add_argument(

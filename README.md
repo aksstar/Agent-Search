@@ -1,12 +1,12 @@
-# Vertex AI Search — Real-Time Entertainment Discovery, Dynamic Boosting & Document CRUD
+# Agent Search — Real-Time Entertainment Discovery, Dynamic Boosting & Document CRUD
 
-An end-to-end reference implementation for **movies and live entertainment discovery** powered by **Google Cloud Vertex AI Search (Discovery Engine)** and **Gemini 3.5 Flash-Lite**.
+An end-to-end reference implementation for **movies and live entertainment discovery** powered by **Google Cloud Agent Search (Discovery Engine)** and **Gemini 3.5 Flash-Lite**.
 
 This repository demonstrates how to:
-1. **Provision & Sync a Vertex AI Search DataStore** with a 4-hour periodic GCS DataConnector (`14400s`) and an Enterprise Search Engine.
+1. **Provision & Sync an Agent Search DataStore** with a 4-hour periodic GCS DataConnector (`14400s`) and an Enterprise Search Engine.
 2. **Perform Real-Time Document CRUD** (`Create`, `Batch Inline Import`, `GET + PATCH Modify`, and `DELETE`) directly against the Discovery Engine `documents` REST API without waiting for periodic GCS syncs.
 3. **Rank Results by Geolocation Proximity** using concentric `location_city:GEO_DISTANCE(lat, lng, radius_meters)` rings inside `conditionBoostSpecs`.
-4. **Translate Natural-Language & Hinglish Queries in Real Time** (`"stand up comedy tonight in pune"`, `"is weekend delhi mein kya chal raha hai"`, `"pottery classes every saturday in october"`) into structured search intents via **Gemini 3.5 Flash-Lite** and compile them deterministically into zero-error Vertex AI Search `boostSpec` conditions.
+4. **Translate Natural-Language & Hinglish Queries in Real Time** (`"stand up comedy tonight in pune"`, `"is weekend delhi mein kya chal raha hai"`, `"pottery classes every saturday in october"`) into structured search intents via **Gemini 3.5 Flash-Lite** and compile them deterministically into zero-error Agent Search `boostSpec` conditions.
 
 ---
 
@@ -34,7 +34,7 @@ This repository demonstrates how to:
 | [`config.example.json`](./config.example.json) | Template configuration file containing placeholder GCP project, GCS, Discovery Engine, and Gemini model settings. |
 | [`generate_sample_data.py`](./generate_sample_data.py) | Deterministic dataset generator producing **234 structured entertainment records** (113 movies + 121 live events across 8 Indian cities) in [`sample_metadata_200.json`](./sample_metadata_200.json). |
 | [`setup_gcs_datastore.py`](./setup_gcs_datastore.py) | Converts JSON to JSONL, uploads to GCS, provisions the Discovery Engine GCS DataConnector (`PERIODIC` 4-hour sync) and Enterprise Search Engine, and verifies live search. |
-| [`watch_gcs_and_sync.py`](./watch_gcs_and_sync.py) | Watches `gs://{GCS_BUCKET}/{GCS_FOLDER}/*.jsonl` for newly uploaded or modified `.jsonl` files (tracking GCS `generation` & `md5Hash`) and immediately triggers a Vertex AI Search DataStore import + connector sync. |
+| [`watch_gcs_and_sync.py`](./watch_gcs_and_sync.py) | Watches `gs://{GCS_BUCKET}/{GCS_FOLDER}/*.jsonl` for newly uploaded or modified `.jsonl` files (tracking GCS `generation` & `md5Hash`) and immediately triggers an Agent Search DataStore import + connector sync. |
 | [`cloud_function_gcs_sync/`](./cloud_function_gcs_sync/) | Serverless **2nd-Gen Cloud Run Function** (`main.py`, `requirements.txt`, `deploy.sh`) triggered by Eventarc (`google.cloud.storage.object.v1.finalized`) whenever a `.jsonl` file is uploaded to GCS. |
 | [`manage_datastore_documents.py`](./manage_datastore_documents.py) | Real-time Document CRUD script demonstrating single creation (`POST`), batch inline import (`POST :import`), partial field modification (`GET` + `PATCH`), and deletion (`DELETE`). |
 | [`query_with_boost.py`](./query_with_boost.py) | Evaluates concentric `GEO_DISTANCE` proximity boosting and runs all 12 natural-language benchmark queries comparing baseline vs. boosted rankings. |
@@ -51,7 +51,7 @@ flowchart TB
         direction LR
         GEN["generate_sample_data.py\n(234 Movies & Events)"] --> JSONL["GCS Bucket (*.jsonl)\n4-Hour Periodic Sync"]
         JSONL --> WATCH["watch_gcs_and_sync.py\nDetects New/Updated GCS Files\n(generation / md5Hash)"]
-        WATCH --> DS[("Vertex AI Search\nDataStore & Engine")]
+        WATCH --> DS[("Agent Search\nDataStore & Engine")]
         CRUD["manage_datastore_documents.py\nReal-Time REST CRUD\n(POST / PATCH / DELETE)"] --> DS
     end
 
@@ -60,7 +60,7 @@ flowchart TB
         UQ["User Query\n'stand up comedy tonight in pune'\n+ Current Time (ISO-8601)\n+ User GPS / City"] --> LLM["Stage 1: Gemini 3.5 Flash-Lite\n(Structured JSON Schema)"]
         LLM --> INTENT["ExtractedSearchIntent\n• search_query: 'standup comedy'\n• city: 'Pune'\n• time_windows: [17:00..23:59]\n• hash_tags: ['STANDUP_COMEDY']"]
         INTENT --> COMP["Stage 2: Deterministic Python\ncompile_boost_specs()"]
-        COMP --> SEARCH["Stage 3: Vertex AI Search\nservingConfigs/default_search:search"]
+        COMP --> SEARCH["Stage 3: Agent Search\nservingConfigs/default_search:search"]
     end
 
     DS --- SEARCH
@@ -76,7 +76,7 @@ All project-specific identifiers and credentials are loaded from `config.local.j
 # 1. Copy the template configuration
 cp config.example.json config.local.json
 
-# 2. Edit config.local.json with your GCP project, GCS bucket, and Vertex AI Search IDs
+# 2. Edit config.local.json with your GCP project, GCS bucket, and Agent Search IDs
 ```
 
 ### Configuration Keys & Environment Variables
@@ -90,8 +90,8 @@ cp config.example.json config.local.json
 | `gcs_bucket` | `GCS_BUCKET` | `your-gcs-bucket-name` | GCS bucket used for JSONL staging |
 | `gcs_folder` | `GCS_FOLDER` | `sample_search_data` | GCS folder prefix for JSONL files |
 | `collection_id` | `COLLECTION_ID` | `sample-data-connector` | Discovery Engine Collection / DataConnector ID |
-| `datastore_id` | `DATASTORE_ID` | `sample-data-connector_gcs_store` | Vertex AI Search DataStore ID |
-| `engine_id` | `SEARCH_ENGINE_ID` | `your-search-engine-id` | Vertex AI Search Engine (App) ID |
+| `datastore_id` | `DATASTORE_ID` | `sample-data-connector_gcs_store` | Agent Search DataStore ID |
+| `engine_id` | `SEARCH_ENGINE_ID` | `your-search-engine-id` | Agent Search Engine (App) ID |
 | `refresh_interval_seconds` | `REFRESH_INTERVAL_SECONDS` | `14400s` | Periodic GCS sync interval (`14400s` = 4 hours) |
 | `gcloud_account` | `GCLOUD_ACCOUNT` | `""` | Optional `gcloud` account for mTLS / CBA fallback |
 | `gemini_model` | `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model used for real-time intent extraction |
@@ -106,7 +106,7 @@ The dataset ([`sample_metadata_200.json`](./sample_metadata_200.json)) contains 
 
 ### Key Schema Fields for Filtering & Boosting
 
-| Field Name | Vertex AI Search Type | Example Value | Usage in `conditionBoostSpecs` |
+| Field Name | Agent Search Type | Example Value | Usage in `conditionBoostSpecs` |
 | :--- | :--- | :--- | :--- |
 | `id` / `_id` | `STRING` (Primary Key) | `"MV00102"`, `"etm100104z"` | Document ID for CRUD & deduplication |
 | `record_type` | `STRING` (Filterable) | `"movie"` \| `"event"` | `record_type: ANY("movie")` |
@@ -123,7 +123,7 @@ The dataset ([`sample_metadata_200.json`](./sample_metadata_200.json)) contains 
 
 ## 5. Geolocation Boosting (`GEO_DISTANCE` Concentric Rings)
 
-In Vertex AI Search, `location_city:GEO_DISTANCE(lat, lng, radius_meters)` inside `conditionBoostSpecs` is a **boolean circle predicate** — it is **not** a continuous distance-decay function:
+In Agent Search, `location_city:GEO_DISTANCE(lat, lng, radius_meters)` inside `conditionBoostSpecs` is a **boolean circle predicate** — it is **not** a continuous distance-decay function:
 * Every document inside `radius_meters` receives the exact same flat boost.
 * Setting a single large radius like `radius_meters = 5000000` (`5,000 km`) places every Indian city inside the same circle, giving them identical boost scores and leaving relative ranking unchanged.
 
@@ -151,9 +151,9 @@ By stacking multiple concentric circles in `conditionBoostSpecs`, closer venues 
 ## 6. Real-Time Query-to-Boost Pipeline (Gemini + Deterministic Compiler)
 
 > [!IMPORTANT]
-> **Never ask an LLM to write raw Vertex AI Search `boostSpec` filter strings directly.** LLMs can hallucinate schema field names, omit quotes, or generate invalid date/geolocation syntax. Instead, use a **2-stage pipeline**:
+> **Never ask an LLM to write raw Agent Search `boostSpec` filter strings directly.** LLMs can hallucinate schema field names, omit quotes, or generate invalid date/geolocation syntax. Instead, use a **2-stage pipeline**:
 > 1. **Stage 1 (LLM Intent Extraction)**: Constrain `gemini-3.5-flash-lite` with a strict `responseSchema` (`ExtractedSearchIntent`) and pass the current ISO-8601 timestamp in the system prompt so relative dates (`"tonight"`, `"this friday"`, `"every saturday in october"`) resolve to exact ISO-8601 windows.
-> 2. **Stage 2 (Deterministic Boost Compiler)**: Compile the validated `ExtractedSearchIntent` object into guaranteed-valid Vertex AI Search `conditionBoostSpecs` in Python (~20 microseconds).
+> 2. **Stage 2 (Deterministic Boost Compiler)**: Compile the validated `ExtractedSearchIntent` object into guaranteed-valid Agent Search `conditionBoostSpecs` in Python (~20 microseconds).
 
 ### Stage 1: Structured Intent Schema (`ExtractedSearchIntent`)
 
@@ -266,11 +266,11 @@ All 12 queries and their baseline vs. boosted rankings are implemented in [`quer
 
 [`realtime_query_benchmark.py`](./realtime_query_benchmark.py) measures live latencies (after TCP/mTLS warm-up) across two execution modes for all 12 benchmark queries:
 
-1. **Single Query Mode (`Single Query (ms)`)**: Direct Vertex AI Search API call (`engines/{ENGINE_ID}/servingConfigs/default_search:search`) with a pre-built query and `boostSpec`.
+1. **Single Query Mode (`Single Query (ms)`)**: Direct Agent Search API call (`engines/{ENGINE_ID}/servingConfigs/default_search:search`) with a pre-built query and `boostSpec`.
 2. **Real-Time Query Resolution Mode (`RT Total E2E (ms)`)**:
    * **LLM Extract (`LLM Extract (ms)`)**: Live call to `gemini-3.5-flash-lite` (`thinkingBudget: 0`, structured `responseSchema`) to parse the raw natural-language query into `ExtractedSearchIntent`.
    * **Boost Compile (`Compile (ms)`)**: Deterministic Python `compile_boost_specs(intent)` execution.
-   * **RT Search (`RT Search (ms)`)**: Live Vertex AI Search API call using the dynamically extracted `search_query` and compiled `conditionBoostSpecs`.
+   * **RT Search (`RT Search (ms)`)**: Live Agent Search API call using the dynamically extracted `search_query` and compiled `conditionBoostSpecs`.
 
 ### 8.1 Per-Query Latency Breakdown (`gemini-3.5-flash-lite`)
 

@@ -1,13 +1,13 @@
 """
-Real-Time Query Resolution & Latency Benchmark for Vertex AI Search (Entertainment & Events).
+Real-Time Query Resolution & Latency Benchmark for Agent Search (Entertainment & Events).
 
 Compares two execution modes across all 12 natural-language benchmark queries:
 1. Single Query (Direct Search):
-   - Direct Vertex AI Search API call using pre-defined query + boostSpec (no LLM call).
+   - Direct Agent Search API call using pre-defined query + boostSpec (no LLM call).
 2. Real-Time Query Resolution (2-Stage Pipeline + Search):
    - Stage 1 (LLM Extraction): Gemini 3.5 Flash-Lite extracts structured intent (what, when, where, language, audience, tags) into `ExtractedSearchIntent`.
    - Stage 2 (Boost Compilation): Deterministic Python compiler (`compile_boost_specs`) builds `conditionBoostSpecs`.
-   - Stage 3 (Boosted Search): Vertex AI Search API call using the dynamically extracted query and compiled `boostSpec`.
+   - Stage 3 (Boosted Search): Agent Search API call using the dynamically extracted query and compiled `boostSpec`.
 """
 
 import json
@@ -57,7 +57,7 @@ class TimeWindow(BaseModel):
 class ExtractedSearchIntent(BaseModel):
     search_query: str = Field(
         description=(
-            "Clean core search query for Vertex AI Search (e.g. 'open mic', 'stand up comedy', "
+            "Clean core search query for Agent Search (e.g. 'open mic', 'stand up comedy', "
             "'movies releasing friday', 'events', 'movie', 'garba night', 'new year eve party', "
             "'upcoming telugu movies', 'play theatre', 'pottery workshop')"
         )
@@ -142,7 +142,7 @@ def compile_boost_specs(
     intent: ExtractedSearchIntent,
     user_latlng: Optional[Tuple[float, float]] = None,
 ) -> List[Dict[str, Any]]:
-    """Deterministically compiles `ExtractedSearchIntent` into Vertex AI Search `conditionBoostSpecs`."""
+    """Deterministically compiles `ExtractedSearchIntent` into Agent Search `conditionBoostSpecs`."""
     specs: List[Dict[str, Any]] = []
 
     # 1. Record Type + Language Boost
@@ -313,7 +313,7 @@ def execute_search_timed(
     condition_boost_specs: Optional[List[Dict[str, Any]]] = None,
     page_size: int = 4,
 ) -> Tuple[Dict[str, Any], float]:
-    """Executes Vertex AI Search and returns (response_json, latency_ms)."""
+    """Executes Agent Search and returns (response_json, latency_ms)."""
     t0 = time.perf_counter()
     resp_json = search_with_boost(
         query=query,
@@ -356,7 +356,7 @@ def get_top_hit_summary(response: Dict[str, Any]) -> str:
 
 
 def run_benchmark() -> None:
-    print(f"Warming up Vertex AI Search session & Gemini 3.5 Flash-Lite ({GEMINI_MODEL}) connection...")
+    print(f"Warming up Agent Search session & Gemini 3.5 Flash-Lite ({GEMINI_MODEL}) connection...")
     execute_search_timed("movie", page_size=1)
     extract_intent_timed("open mic next week")
     print("Warm-up complete.\n")
@@ -374,7 +374,7 @@ def run_benchmark() -> None:
         qid = bq["id"]
         raw_query = bq["query"]
 
-        # 1. Single Query Mode (Pre-configured query + boostSpec directly to Vertex AI Search)
+        # 1. Single Query Mode (Pre-configured query + boostSpec directly to Agent Search)
         single_resp, single_search_ms = execute_search_timed(
             query=bq["what_query"],
             condition_boost_specs=bq["boost_specs"],
@@ -382,7 +382,7 @@ def run_benchmark() -> None:
         )
         single_top1 = get_top_hit_summary(single_resp)
 
-        # 2. Real-Time Query Resolution Mode (Gemini Extraction -> Python Boost Compiler -> Vertex AI Search)
+        # 2. Real-Time Query Resolution Mode (Gemini Extraction -> Python Boost Compiler -> Agent Search)
         intent, llm_ms = extract_intent_timed(raw_query)
 
         t_comp0 = time.perf_counter()
@@ -463,7 +463,7 @@ if __name__ == "__main__":
 # ==============================================================================
 # EXECUTION OUTPUT (`python realtime_query_benchmark.py`)
 # ==============================================================================
-# Warming up Vertex AI Search session & Gemini 3.5 Flash-Lite (gemini-3.5-flash-lite) connection...
+# Warming up Agent Search session & Gemini 3.5 Flash-Lite (gemini-3.5-flash-lite) connection...
 # Warm-up complete.
 #
 # =======================================================================================================================================
