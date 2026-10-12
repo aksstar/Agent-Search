@@ -376,7 +376,182 @@ python watch_gcs_and_sync.py --simulate-upload
 
 ---
 
-## 11. Quickstart & CLI Usage
+## 11. Real-Time Hybrid Query Router, `<1 ms` Rule Boost Compiler & Post-Search Validator ([`realtime_hybrid_router.py`](./realtime_hybrid_router.py))
+
+### 11.1 The Two Production Challenges This Module Solves
+
+#### Challenge 1: Why Raw Unboosted Search & Post-Search `"0-Hit Fallback"` Fail
+In a production entertainment catalog, **Vertex AI Agent Search almost never returns `0 HITS`** because its hybrid lexical + vector retriever will match *some* word in the query (`"movie"`, `"show"`, `"tonight"`, `"pune"`). Instead of returning `0 HITS`, unboosted queries frequently return **the wrong distractor at `#1`**:
+
+| User Query | What Raw Unboosted Search Returned at `#1` | Why It Failed Without Boost Specs |
+| :--- | :--- | :--- |
+| `"late night shows after 10 pm"` | `[MV00104]` *Deadpool & Wolverine (Afternoon Show)* (`15:30`) | Matched the word `"show"`, ignoring the `>= 22:00` time constraint. |
+| `"movies near me"` | `[MV00058]` *Stree 3* (**Pune**) | No `GEO_DISTANCE` rings around the user's Mumbai GPS (`19.0760, 72.8777`). |
+| `"things to do in lower parel tonight"` | `[MV00077]` *Metro In Dino 2* (**Oct 24**, `19:15`) | Matched `"Lower Parel"` venue, but missed `"tonight"` (`Oct 7`). |
+| `"comedians like zakir khan"` | `[etm100010z]` **Zakir Khan Live - Mumbai** | Lexical match on `"Zakir Khan"` ranked the excluded seed artist himself at `#1`. |
+| `"funny movie without any horror"` | **`0 HITS`** *(or matches Horror movies in larger catalogs)* | Lexical search treats `"without any horror"` as required positive keywords. |
+| `"something after 9 pm near hitec city that isnt a movie"` | `[etm100073z]` *Samay Raina - Hyderabad* (**Oct 19**, `19:30`) | Missed both `"after 9 pm"` (`>= 21:00`) and the HITEC City venue constraint. |
+
+> **Key Takeaway**: Waiting for Agent Search to return `0 HITS` before triggering an LLM/boost fallback does not work in production because Agent Search will happily return 10 wrong results in `215 ms`. You must decide **before** calling Agent Search (in `<1 ms`) how to route and boost the query.
+
+#### Challenge 2: Why Calling an LLM on Every Request Is Too Slow
+While Agent Search evaluates `conditionBoostSpecs` in **`~1.9 ms`** (`214.8 ms` unboosted vs. `216.7 ms` boosted), calling `gemini-3.5-flash-lite` in the critical path to parse every query adds **`~1,955.6 ms` (~90% of total E2E latency)**:
+* **Every-Query LLM Pipeline**: `~1,955.6 ms` (LLM) + `0.02 ms` (Boost Compile) + `216.7 ms` (Agent Search) = **`~2,172.3 ms` E2E** (~10x slower).
+* **Hybrid Router Pipeline ([`realtime_hybrid_router.py`](./realtime_hybrid_router.py))**: **`0.1–0.5 ms`** (Rule Parse + Pre-Search Gate) + **`0.02 ms`** (Boost Compile) + **`~216 ms`** (Agent Search) = **`~217 ms` E2E** (`0` LLM calls for ~85% of traffic).
+
+---
+
+### 11.2 Deep-Dive: 3-Stage Architecture ([`realtime_hybrid_router.py`](./realtime_hybrid_router.py))
+
+```mermaid
+flowchart TD
+    U["User Query + Device GPS + Current Clock"] --> R["Stage 1: <1ms Pre-Search Parser & 'Unexplained Token' Gate\n(fast_rule_parse)"]
+    R -->|"unexplained_tokens == [] AND no 'like/similar/vs'\n(~85% of Traffic — 0 LLM Calls)"| FP["Route A: Fast Rule-Boosted Search\n(compile_hybrid_boost_specs in ~0.03ms)"]
+    R -->|"unexplained_tokens >= 1 OR 'like/similar/anniversary'\n(~15% of Traffic — 1 LLM Call)"| LLM["Route B: Gemini 3.5 Flash-Lite Intent Extraction\n(extract_intent_timed ~1,955ms)"]
+    FP --> AS["Vertex AI Agent Search (~215ms)"]
+    LLM --> AS
+    AS --> VAL["Stage 3: <0.1ms Post-Search Top-1 Constraint Validator\n(validate_and_rerank_candidates)"]
+    VAL -->|"Audits City, Time Window & Excluded Genres/Types"| OUT["Guaranteed Compliant Top-1 Result"]
+```
+
+---
+
+#### Stage 1: `<1 ms` Pre-Search Parser & "Unexplained Token" Router (`fast_rule_parse`)
+
+Instead of guessing whether a query is "simple" or "complex", `fast_rule_parse()` runs a deterministic 11-step extraction pass in **`<0.5 ms`** that strips every recognized constraint from a working copy of the query string:
+
+1. **Similarity / Conversational Trigger Check (`LLM_COMPLEX_TRIGGERS`)**: Checks for relational operators (`like`, `similar to`, `smaller`, `cheaper`, `better`, `vs`, `something to take`, `what to watch`, `plan my`, `directed by`, `music by`). If `"comedians/artists like <Name>"` is matched, automatically records `<Name>` in `intent.excluded_artists`.
+2. **Negative Clause Extraction & Stripping (`NEGATIVE_REGEX`)**: Matches phrases like `without any horror`, `but not a cartoon`, `that isnt a movie`. **Crucially, it strips the entire negative phrase from the search string** (so Agent Search never matches the negated noun) and populates `excluded_genres`, `excluded_record_types`, or `excluded_keywords`.
+3. **Temporal Window Extraction (`TEMPORAL_PATTERNS`)**: Matches relative dates/times (`tonight`, `aaj raat`, `after 10 pm`, `after 9 pm`, `tomorrow before 11`, `kal subah`, `this friday`, `this sunday morning`, `this weekend`, `next week`, `next month`, `gandhi jayanti`, `every saturday in october`) and converts them into exact ISO-8601 `TimeWindow(start_iso, end_iso)` objects + `hash_tags`.
+4. **Audience & Occasion Extraction (`AUDIENCE_PATTERNS`)**: Matches `for kids`, `bachon ke liye`, `5 year old`, `family friendly`, `for couples`, `date night`. When `kids` or `family` is detected, automatically adds `Comedy` to positive genres and adds `Horror`, `Thriller`, `Crime`, `Action`, `Sci-Fi` to `excluded_genres`.
+5. **Price Ceiling Extraction**: Matches `under ₹500`, `below 300`, or `free` → sets `intent.max_price`.
+6. **Proximity Extraction**: Matches `near me`, `nr me`, `sabse paas`, `paas wala` → sets `intent.use_user_gps = True`.
+7. **City & Micro-Locality Gazetteer (`CITY_ALIASES` & `VENUE_SUBLOCALITY_BOOSTS`)**: Maps 45+ city names, spellings (`banglore`, `blr`, `hyd`, `ncr`), and micro-neighborhoods (`lower parel`, `bandra`, `andheri`, `koramangala`, `indiranagar`, `whitefield`, `hitec city`, `anna nagar`) to canonical `intent.city` AND specific neighborhood venue boost conditions.
+8. **Format Gazetteer (`FORMAT_MAP`)**: Extracts `IMAX 3D`, `IMAX`, `4DX`, `Dolby Atmos`, `ScreenX`, `3D`.
+9. **Language Gazetteer (`LANGUAGE_MAP`)**: Extracts `Hindi`, `English`, `Telugu`, `Tamil`, `Kannada`, `Malayalam`, `Marathi`, `Bengali`, `Punjabi`.
+10. **Genre & Event-Type Gazetteer (`GENRE_MAP`)**: Maps `horror`/`horor`/`scary`, `comedy`/`komedy`/`funny`, `stand up`, `open mic`, `concert`/`concrt`, `acoustic`/`gigs`, `garba`, `pottery`, `play`/`natak` to clean core search terms, canonical genres, and `record_type` (`movie` vs. `event`).
+11. **Residual Token Check Against `SAFE_STOPWORDS` & `CATALOG_VOCAB`**:
+    * Any remaining word is checked against `SAFE_STOPWORDS` and `CATALOG_VOCAB` (all movie/event titles, artist names, and venue words loaded in memory from `sample_metadata_200.json`).
+    * Words not found in either set are placed in **`intent.unexplained_tokens`**.
+
+**The Pre-Search Routing Rule (`<0.5 ms`)**:
+* **`ROUTE_A_FAST_RULE_BOOST` (`0` LLM calls, `~217 ms` E2E)** is selected if and only if **`intent.unexplained_tokens == []`** AND no `LLM_COMPLEX_TRIGGERS` matched.
+* **`ROUTE_B_LLM_EXTRACTION` (`1` Gemini call)** is selected immediately (before calling Agent Search) if **`len(intent.unexplained_tokens) >= 1`** or a similarity/conversational trigger matched.
+
+---
+
+#### Stage 2: `<0.05 ms` Deterministic Boost Compiler (`compile_hybrid_boost_specs`)
+
+Both Route A and Route B feed their `HybridParsedIntent` into `compile_hybrid_boost_specs()`, which deterministically emits up to 6 layers of `conditionBoostSpecs`:
+
+| Boost Layer | Filter Condition Generated | Boost Weight | Purpose |
+| :--- | :--- | :---: | :--- |
+| **1. Record Type + Language** | `record_type: ANY("movie") AND languages: ANY("Tamil")` | `+0.65` | Separates movies vs. live events and enforces language. |
+| **2. Format & Genre** | `formats: ANY("IMAX 3D")` / `genres: ANY("Comedy")` | `+0.85` / `+0.75` | Promotes exact experience format and genre matches. |
+| **3. Audience & Hashtags** | `searchKeywords: ANY("kids") OR hash_tags: ANY("KIDS_FRIENDLY")` | `+0.75` | Surfaces age-appropriate and occasion-tagged records. |
+| **4. Sub-Locality + City / GPS Rings** | `venue: ANY("PVR ICON Phoenix Palladium, Lower Parel")` (`+0.90`)<br>`location_city:GEO_DISTANCE(lat, lng, 50000)` (`+0.85`)<br>*Or 3 concentric user-GPS rings (`15km` `+0.65`, `50km` `+0.45`, `300km` `+0.20`)* | `+0.20` to `+0.90` | Ranks exact neighborhood venue first, then same city, or concentric distance rings around caller GPS. |
+| **5. Date / Time Window** | `(showtime_start >= "2026-10-07T22:00:00+05:30" AND showtime_start <= "2026-10-08T03:00:00+05:30")` | `+0.90` | Strongly promotes shows inside the exact requested date/hour window. |
+| **6. Negative Exclusions** | `record_type: ANY("movie")` (`-0.90`)<br>`genres: ANY("Horror")` (`-0.85`)<br>`artists: ANY("Zakir Khan")` (`-0.95`) | **`-0.85` to `-0.95`** | Actively demotes negated record types, negated genres, adult genres on kids queries, and seed artists on `"like X"` queries. |
+
+---
+
+#### Stage 3: `<0.1 ms` Post-Search Top-1 Constraint Validator (`validate_and_rerank_candidates`)
+
+Because `conditionBoostSpecs` in Agent Search are **soft ranking boosts** rather than hard SQL `WHERE` filters, a document with a very high lexical/vector score in the wrong city or wrong time window can occasionally still appear at `#1`.
+
+Stage 3 inspects the returned candidate list in **`<0.1 ms` in Python**:
+1. Checks `results[0].structData` via `validate_candidate()` against four hard rules:
+   * **City Match**: `if intent.city and doc["city"] != intent.city` → Violation!
+   * **Excluded Record Type**: `if doc["record_type"] in intent.excluded_record_types` → Violation!
+   * **Excluded Genre / Seed Artist**: `if doc["genres"] ∩ intent.excluded_genres` or `doc["artists"] ∩ intent.excluded_artists` → Violation!
+   * **Time Window Compliance**: `if doc["showtime_start"] not in intent.time_windows` → Violation!
+2. If `#1` has zero violations, it is returned immediately.
+3. If `#1` violates any constraint, `validate_and_rerank_candidates()` partition-sorts the top-10 candidates (`compliant + non_compliant`), deterministically promoting the highest-ranked compliant document to `#1`.
+
+---
+
+### 11.3 Six Step-by-Step Worked Examples (Live Traces from `realtime_hybrid_router.py`)
+
+#### Example 1: Multi-Constraint Time + City + Event Type (Route A — `0` LLM Calls)
+* **Input Query**: `"stand up comedy tonight in pune"`
+* **Stage 1 (`fast_rule_parse` in `0.90 ms`)**:
+  * `"tonight"` → matched by `TEMPORAL_PATTERNS` → `TimeWindow("2026-10-07T17:00:00+05:30", "2026-10-07T23:59:59+05:30")`
+  * `"pune"` → matched by `CITY_ALIASES` → `city = "Pune"` (`18.5204, 73.8567`)
+  * `"stand up"` + `"comedy"` → matched by `GENRE_MAP` → `record_type = "event"`, `genres = ["Comedy"]`, `search_query = "stand up comedy"`
+  * `"in"` → matched by `SAFE_STOPWORDS`
+  * **`unexplained_tokens`**: `[]` → **Selected `ROUTE_A_FAST_RULE_BOOST` (`0` LLM calls)**
+* **Stage 2 (`compile_hybrid_boost_specs` in `0.01 ms`)**:
+  ```json
+  [
+    {"condition": "record_type: ANY(\"event\")", "boost": 0.65},
+    {"condition": "genres: ANY(\"Comedy\")", "boost": 0.75},
+    {"condition": "location_city:GEO_DISTANCE(18.5204, 73.8567, 50000)", "boost": 0.85},
+    {"condition": "(showtime_start >= \"2026-10-07T17:00:00+05:30\" AND showtime_start <= \"2026-10-07T23:59:59+05:30\")", "boost": 0.9}
+  ]
+  ```
+* **Stage 3 & Result**: Returns `[etm100104z]` **BASSI KISI KO BATANA MAT STAND UP COMEDY - PUNE** (`Pune | 2026-10-07T21:00`) at `#1` with **`0` LLM calls**.
+
+---
+
+#### Example 2: Negative Genre Constraint Rescued from `0 HITS` Without an LLM (Route A — `0` LLM Calls)
+* **Input Query**: `"funny movie without any horror"` *(Returned `0 HITS` in raw unboosted search!)*
+* **Stage 1 (`fast_rule_parse` in `0.36 ms`)**:
+  * `"without any horror"` → matched by `NEGATIVE_REGEX` → **stripped from query string**; adds `"Horror"` to `excluded_genres` and `"horror"` to `excluded_keywords`.
+  * `"funny"` → matched by `GENRE_MAP` → `genres = ["Comedy"]`, `clean_core_terms = ["comedy"]`.
+  * `"movie"` → sets `record_type = "movie"`.
+  * **`search_query`**: `"comedy"` (clean positive query!)
+  * **`unexplained_tokens`**: `[]` → **Selected `ROUTE_A_FAST_RULE_BOOST` (`0` LLM calls)**
+* **Stage 2 (`compile_hybrid_boost_specs` in `0.02 ms`)**:
+  * Positive boosts: `record_type: ANY("movie")` (`+0.65`), `genres: ANY("Comedy")` (`+0.75`), plus Mumbai GPS rings.
+  * Negative boosts: `genres: ANY("Horror")` (**`-0.85`**), `searchKeywords: ANY("horror")` (**`-0.85`**).
+* **Stage 3 & Result (`346.3 ms` Total E2E)**: Returns `[MV00052]` **Housefull 6** (`Mumbai | Comedy | U`) at `#1`.
+
+---
+
+#### Example 3: Sub-Locality + Time Window + Negative Record Type (Route A — `0` LLM Calls)
+* **Input Query**: `"something after 9 pm near hitec city that isnt a movie"` *(Raw search returned an Oct 19 `19:30` show!)*
+* **Stage 1 (`fast_rule_parse` in `0.24 ms`)**:
+  * `"that isnt a movie"` → matched by `NEGATIVE_REGEX` → **stripped**; sets `excluded_record_types = ["movie"]` and `record_type = "event"`.
+  * `"after 9 pm"` → matched by `TEMPORAL_PATTERNS` → `TimeWindow("2026-10-07T21:00:00+05:30", ...)`, `hash_tags = ["LATE_NIGHT_SHOW"]`.
+  * `"hitec city"` → matched by `CITY_ALIASES` & `VENUE_SUBLOCALITY_BOOSTS` → `city = "Hyderabad"`, `sublocality_condition = 'venue: ANY("HITEX Exhibition Centre", "AMB Cinemas, Gachibowli")'`.
+  * `"something"`, `"near"` → `SAFE_STOPWORDS`.
+  * **`search_query`**: `"Hyderabad"` | **`unexplained_tokens`**: `[]` → **Selected `ROUTE_A_FAST_RULE_BOOST` (`0` LLM calls)**
+* **Stage 2 & Result (`372.9 ms` Total E2E)**: Boosts `record_type: ANY("event")` (`+0.65`), `venue: ANY("HITEX Exhibition Centre", ...)` (`+0.90`), `GEO_DISTANCE(Hyderabad)` (`+0.85`), and penalizes `record_type: ANY("movie")` (**`-0.90`**). Ranks `[etm100020z]` **COMIC CON INDIA - HYDERABAD** (`HITEX Exhibition Centre`) at `#1`.
+
+---
+
+#### Example 4: Audience Inference & Adult-Genre Exclusion (Route A — `0` LLM Calls)
+* **Input Query**: `"movies for kids"` & `"kids movie but not a cartoon"` *(Both returned `0 HITS` in raw unboosted search!)*
+* **Stage 1 (`fast_rule_parse` in `0.27 ms`)**:
+  * `"for kids"` / `"kids"` → matched by `AUDIENCE_PATTERNS` → adds `Comedy` to positive `genres`, adds `["KIDS_EVENT", "KIDS_FRIENDLY", "FAMILY_ENTERTAINER"]` to `hash_tags`, and automatically populates `excluded_genres = ["Horror", "Thriller", "Crime", "Action", "Sci-Fi"]` (plus `"Animation"` when `"but not a cartoon"` is present).
+  * **`search_query`**: `"movie"` | **`unexplained_tokens`**: `[]` → **Selected `ROUTE_A_FAST_RULE_BOOST` (`0` LLM calls)**
+* **Stage 3 & Result (`366.0 ms` Total E2E)**: Penalizes action/sci-fi/horror blockbusters (`Kalki 2898 AD`, `Bramayugam 2`) and ranks `[MV00052]` **Housefull 6** (`Comedy/Family, U`) at `#1`.
+
+---
+
+#### Example 5: Similarity Trigger (`"like X"`) & Seed-Entity Exclusion (Route B — LLM Path)
+* **Input Query**: `"comedians like zakir khan"` *(Raw search ranked `Zakir Khan Live` itself at `#1`!)*
+* **Stage 1 (`fast_rule_parse` in `0.27 ms`)**:
+  * Detects similarity trigger `"like"` via `LLM_COMPLEX_TRIGGERS` and extracts seed artist `"Zakir Khan"` into `intent.excluded_artists = ["Zakir Khan"]`.
+  * **Pre-Search Gate Decision**: Immediately selects **`ROUTE_B_LLM_EXTRACTION`** (`Complex/similarity trigger detected: 'like'`).
+* **Stage 2 (LLM Extraction + Seed Stripping + Negative Artist Boost)**:
+  * Gemini extracts `search_query = "stand up comedy"`, `record_type = "event"`.
+  * Router strips `"Zakir Khan"` from `search_query` and compiles `{"condition": 'artists: ANY("Zakir Khan")', "boost": -0.95}`.
+* **Stage 3 & Result**: `Zakir Khan` is demoted/excluded, and peer Hindi stand-up comedian `[etm100104z]` **BASSI KISI KO BATANA MAT STAND UP COMEDY** ranks at `#1`!
+
+---
+
+#### Example 6: Unexplained Vernacular Tokens Caught by Pre-Search Gate (Route B — LLM Path)
+* **Input Query**: `"rajini padam eppo release"` *(Tamil transliterated: "When is Rajinikanth's movie releasing?" — returned `0 HITS` in raw search)*
+* **Stage 1 (`fast_rule_parse` in `0.25 ms`)**:
+  * None of `['rajini', 'padam', 'eppo', 'release']` match the English dictionary rules.
+  * **`unexplained_tokens`**: `['rajini', 'padam', 'eppo', 'release']` (`len >= 1`).
+  * **Pre-Search Gate Decision**: Immediately selects **`ROUTE_B_LLM_EXTRACTION`** without wasting `215 ms` on a doomed unboosted call.
+* **Stage 2 & Result**: Gemini translates the Tamil query into `search_query = "Rajinikanth movie"`, `record_type = "movie"`, `date_field = "release_date"`, ranking Rajinikanth's `[MV00041]` **Coolie** at `#1`.
+
+---
+
+## 12. Quickstart & CLI Usage
 
 ```bash
 # 1. Configure local project & datastore settings
@@ -405,10 +580,15 @@ python query_with_boost.py
 # 8. Run the Single-Query vs. Real-Time LLM Query Resolution latency benchmark
 python realtime_query_benchmark.py
 
-# 9. Run an ad-hoc search query with a custom boost condition
+# 9. Run the Real-Time Hybrid Router (<1ms Pre-Search Gate + Rule Boost + Validator)
+python realtime_hybrid_router.py
+python realtime_hybrid_router.py -q "something after 9 pm near hitec city that isnt a movie"
+
+# 10. Run an ad-hoc search query with a custom boost condition
 python query_with_boost.py \
   -q "Welcome to the Jungle" \
   -c "location_city:GEO_DISTANCE(13.0827, 80.2707, 100000)" \
   -b 0.8
 ```
+
 

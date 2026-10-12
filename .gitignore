@@ -8,4 +8,6 @@ venv/
 .DS_Store
 .gcs_sync_state.json
 *.jsonl
-
+EVALUATION_135_QUERIES.md
+eval_135_results.json
+evaluate_all_queries.py
