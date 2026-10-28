@@ -36,7 +36,7 @@ This repository provides:
 | File / Folder | Purpose |
 | :--- | :--- |
 | [`realtime_test_webapp.py`](./realtime_test_webapp.py) | Lightweight CLI entrypoint (`http://127.0.0.1:8080`) that boots the modular `search_studio/` server. |
-| [`search_studio/`](./search_studio/) | **Modular Real-Time Search Studio Package**: |
+| [`search_studio/`](./search_studio/) | **Modular Real-Time Search Studio Package** (see [`search_studio/README.md`](./search_studio/README.md)): |
 | ↳ [`search_studio/router_api.py`](./search_studio/router_api.py) | **Gemma 3 Decision Router API** (`GET / POST /api/route_decision` — `DIRECT_AGENT_SEARCH` vs. `CALL_LLM_INTENT`). |
 | ↳ [`search_studio/intent_extractor.py`](./search_studio/intent_extractor.py) | **Python Code for LLM Intent Extraction** (Local Apple Metal GPU `mlx-lm` Gemma 3 / Qwen 2.5 + Cloud Vertex Gemini). |
 | ↳ [`search_studio/prompts.py`](./search_studio/prompts.py) | **LLM-Based System Prompts & Few-Shot Chat Templates** (Intent Extractor, Gemma 3 Router, and Flash-Lite Hit Explainer). |
