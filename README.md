@@ -35,8 +35,17 @@ This repository provides:
 
 | File / Folder | Purpose |
 | :--- | :--- |
-| [`realtime_test_webapp.py`](./realtime_test_webapp.py) | Real-Time Search Backend API (`http://127.0.0.1:8080`) hosting `/api/route_decision` (Gemma 3 Router), `/api/search`, `/api/side_by_side`, `/api/compare_apps`, and `/api/explain`. |
-| [`realtime_test_ui.html`](./realtime_test_ui.html) | Clean Dark-Mode Search Studio UI dynamically loaded by `realtime_test_webapp.py` (Side-by-Side NLQU vs. LLM Boost, Single Inspector, `v2` vs. `v3` App Comparison, Lat/Long GPS Ring Booster). |
+| [`realtime_test_webapp.py`](./realtime_test_webapp.py) | Lightweight CLI entrypoint (`http://127.0.0.1:8080`) that boots the modular `search_studio/` server. |
+| [`search_studio/`](./search_studio/) | **Modular Real-Time Search Studio Package**: |
+| ↳ [`search_studio/router_api.py`](./search_studio/router_api.py) | **Gemma 3 Decision Router API** (`GET / POST /api/route_decision` — `DIRECT_AGENT_SEARCH` vs. `CALL_LLM_INTENT`). |
+| ↳ [`search_studio/intent_extractor.py`](./search_studio/intent_extractor.py) | **Python Code for LLM Intent Extraction** (Local Apple Metal GPU `mlx-lm` Gemma 3 / Qwen 2.5 + Cloud Vertex Gemini). |
+| ↳ [`search_studio/prompts.py`](./search_studio/prompts.py) | **LLM-Based System Prompts & Few-Shot Chat Templates** (Intent Extractor, Gemma 3 Router, and Flash-Lite Hit Explainer). |
+| ↳ [`search_studio/compiler.py`](./search_studio/compiler.py) | **Deterministic Intent-to-Boost & Geolocation Compiler** (`serialize_llm_slots_to_boost_specs`). |
+| ↳ [`search_studio/taxonomy.py`](./search_studio/taxonomy.py) | **Facet & Geography Mappings** (`CANONICAL_CITY_MAP`, `SUBLOCALITY_TO_CITY_MAP`, `CITY_TO_LATLNG`, formats, genres, categories). |
+| ↳ [`search_studio/search_service.py`](./search_studio/search_service.py) | **Live Vertex AI Search Dispatcher**, 3-Ring Concentric Lat/Long `GEO_DISTANCE` Booster, Side-by-Side & `v2` vs. `v3` Comparators. |
+| ↳ [`search_studio/client.py`](./search_studio/client.py) | **Search App Registry (`v3` vs. `v2`)** and keep-alive ECP / mTLS HTTP client (`EcpClient`). |
+| ↳ [`search_studio/server.py`](./search_studio/server.py) | **HTTP API Server & Request Handler** (`RealtimeTestHandler`). |
+| ↳ [`search_studio/ui.html`](./search_studio/ui.html) | **Clean Dark-Mode Search Studio Frontend UI** (Side-by-Side NLQU vs. LLM Boost, Single Inspector, `v2` vs. `v3` Compare, GPS Booster). |
 | [`setup_gcs_datastore.py`](./setup_gcs_datastore.py) | Provisions GCS DataConnectors and Enterprise Search Engines from JSONL files. |
 | [`config.py`](./config.py) / [`config.example.json`](./config.example.json) | Centralized configuration loader reading from environment variables or git-ignored `config.local.json`. |
 
@@ -84,15 +93,15 @@ flowchart TB
     end
 
     %% ==================== 2. REAL-TIME QUERY & DECISION PLANE ====================
-    subgraph RuntimePlane["2. Real-Time Query Routing, LLM Slot Extraction & Boost Compilation (realtime_test_webapp.py)"]
+    subgraph RuntimePlane["2. Modular Real-Time Search Studio Package (search_studio/)"]
         direction TB
-        UI["Search Studio UI (realtime_test_ui.html) / API Client\n• Query: 'concerts between 1000 and 3000 in delhi' or 'Spider-Man: No Way Home'\n• Optional User GPS: (user_lat, user_lng, user_radius_km)"]:::ui
+        UI["Frontend UI (search_studio/ui.html) & Server (search_studio/server.py)\n• Query: 'concerts between 1000 and 3000 in delhi' or 'Spider-Man: No Way Home'\n• Optional User GPS: (user_lat, user_lng, user_radius_km)"]:::ui
 
-        ROUTER{"Step 0: Gemma 3 Decision API\nPOST /api/route_decision\nLocal Metal GPU: gemma-3-1b-it-qat-4bit\n(367-tok KV Cache • ~50–160 ms)"}:::router
+        ROUTER{"Step 0: Gemma 3 Decision API\nsearch_studio/router_api.py\nPOST /api/route_decision\nLocal Metal GPU: gemma-3-1b-it-qat-4bit\n(367-tok KV Cache • ~50–160 ms)"}:::router
 
         DIRECT_PATH["Route A: DIRECT_AGENT_SEARCH\ncall_llm_for_intent = false\n• Pure Movie / Event / Artist / Venue / Offer Name\n• 0 ms LLM Intent Overhead"]:::compiler
 
-        subgraph LLM_Intent_Stage["Route B: CALL_LLM_INTENT (call_llm_for_intent = true)"]
+        subgraph LLM_Intent_Stage["Route B: CALL_LLM_INTENT (search_studio/intent_extractor.py + prompts.py)"]
             direction LR
             LLM_EXTRACT["Step 1: 8-Key JSON Slot Extractor\n• Local Metal GPU (mlx-lm):\n  - gemma-3-1b-it-qat-4bit (~97 ms • 97.0% Top-1)\n  - gemma-3-270m-it-qat-4bit (~55 ms)\n  - Qwen2.5-3B-Instruct-4bit (~180 ms)\n• Cloud Vertex AI:\n  - gemini-3.5-flash-lite / gemini-4-argon"]:::llm
 
@@ -100,11 +109,11 @@ flowchart TB
             LLM_EXTRACT --> SLOTS
         end
 
-        COMPILER["Step 2: Deterministic Boost & Geo Compiler\ncompile_boost_specs_from_intent()\n• Price Range: min_price >= 1000 AND min_price <= 3000 (+0.85)\n• City Expand: regions: ANY('Delhi','New Delhi','Gurugram','Noida') (+0.85)\n• Format / Language / Date / Time-Slot Boosts (+0.75 to +0.85)\n• Negative Exclusions (-0.90)"]:::compiler
+        COMPILER["Step 2: Deterministic Boost & Geo Compiler\nsearch_studio/compiler.py + taxonomy.py\n• Price Range: min_price >= 1000 AND min_price <= 3000 (+0.85)\n• City Expand: regions: ANY('Delhi','New Delhi','Gurugram','Noida') (+0.85)\n• Format / Language / Date / Time-Slot Boosts (+0.75 to +0.85)\n• Negative Exclusions (-0.90)"]:::compiler
 
-        GEO_BOOST["Step 2b: Lat/Long Concentric Proximity Booster\n• Guard Filter: location:GEO_DISTANCE(lat, lng, 3000000)\n• Ring 1 (<= 3 km): +0.95\n• Ring 2 (<= 10 km): +0.80\n• Ring 3 (<= 25 km): +0.55"]:::compiler
+        GEO_BOOST["Step 2b: Lat/Long Concentric Proximity Booster\nsearch_studio/search_service.py\n• Guard Filter: location:GEO_DISTANCE(lat, lng, 3000000)\n• Ring 1 (<= 3 km): +0.95\n• Ring 2 (<= 10 km): +0.80\n• Ring 3 (<= 25 km): +0.55"]:::compiler
 
-        DISPATCH["Step 3: Discovery Engine Search Dispatcher (mTLS / ECP)\n• servingConfigs/default_search:search\n• crowdingSpecs: field='entity_code', maxCount=1 (Deduplicate Sessions)\n• Auto 0-Hit Sub-Locality Geo Fallback\n• Haversine Distance Pill (km away) & Rule Verdict Evaluator"]:::vertex
+        DISPATCH["Step 3: Discovery Engine Search Dispatcher\nsearch_studio/search_service.py + client.py\n• servingConfigs/default_search:search\n• crowdingSpecs: field='entity_code', maxCount=1\n• Auto 0-Hit Sub-Locality Geo Fallback\n• Haversine Distance Pill (km away)"]:::vertex
 
         UI --> ROUTER
         ROUTER -->|"call_llm_for_intent: false\n(Entity / Title Lookup)"| DIRECT_PATH
