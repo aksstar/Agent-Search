@@ -31,6 +31,7 @@ class _GcloudCliCredentials(google.auth.credentials.Credentials):
     """Auto-refreshing credentials backed by `gcloud auth print-access-token`."""
 
     def __init__(self, account: str = "", quota_project_id: str | None = None) -> None:
+        """Initialize CLI-backed credentials and perform an immediate token fetch."""
         super().__init__()
         self._account = account
         self._quota_project_id = quota_project_id
@@ -39,9 +40,11 @@ class _GcloudCliCredentials(google.auth.credentials.Credentials):
 
     @property
     def quota_project_id(self) -> str | None:
+        """Return the quota project ID sent in `x-goog-user-project` headers."""
         return self._quota_project_id
 
     def refresh(self, request) -> None:
+        """Refresh OAuth access token via `gcloud auth print-access-token`."""
         cmd = ["gcloud", "auth", "print-access-token"]
         if self._account:
             cmd.extend(["--account", self._account])
@@ -60,6 +63,7 @@ class _GcloudCliCredentials(google.auth.credentials.Credentials):
         self.expiry = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(minutes=50)
 
     def apply(self, headers, token=None) -> None:
+        """Attach Bearer Authorization and `x-goog-user-project` headers to outgoing HTTP requests."""
         headers["authorization"] = f"Bearer {token or self.token}"
         if self._quota_project_id:
             headers["x-goog-user-project"] = self._quota_project_id

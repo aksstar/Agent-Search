@@ -15,6 +15,7 @@ _LOCAL_CONFIG_PATH = _CONFIG_DIR / "config.local.json"
 
 
 def _load_local_config() -> Dict[str, Any]:
+    """Load optional local overrides from git-ignored `config.local.json` if present."""
     if _LOCAL_CONFIG_PATH.exists():
         try:
             with open(_LOCAL_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -28,6 +29,7 @@ _CFG = _load_local_config()
 
 
 def _get(env_key: str, json_key: str, default: str) -> str:
+    """Resolve a setting from `os.environ[env_key]`, then `config.local.json[json_key]`, else `default`."""
     val = os.getenv(env_key)
     if val is not None and val != "":
         return val

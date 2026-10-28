@@ -239,6 +239,32 @@ Live benchmark across **30 uncached queries** (`use_cache=false`: 15 direct enti
 
 ---
 
+### 2.5 How `search_studio/taxonomy.py` Is Used & Why the LLM Cannot Handle It Alone
+
+In `search_studio/`, the **LLM** ([`search_studio/intent_extractor.py`](./search_studio/intent_extractor.py)) and **[`search_studio/taxonomy.py`](./search_studio/taxonomy.py)** split query understanding into two complementary stages:
+
+1. **Stage 1 — LLM Semantic Slot Extraction (~97 ms)**:
+   The LLM reads messy natural-language queries (typos, Hinglish/Tamil/Kannada/Bengali code-mixing, negations like `"without any horror"` or `"that isnt a movie"`) and emits a compact, schema-agnostic 8-key JSON intent:
+   ```json
+   {"type": "movie", "city": "Gurgaon", "fmt": "4DX", "genres": ["Romance"], "q": "4DX romantic movie"}
+   ```
+2. **Stage 2 — Deterministic Taxonomy Expansion & Grounding (~0.05 ms in [`compiler.py`](./search_studio/compiler.py) + [`taxonomy.py`](./search_studio/taxonomy.py))**:
+   - **City & Metro Canonicalization (`CANONICAL_CITY_MAP` & `GEO_CITY_NAME_MAP`)**: Maps `"Gurgaon"`, `"Noida"`, `"Delhi"` $\rightarrow$ `"National Capital Region (NCR)"` for `regions: ANY(...)`, while mapping it to `"New Delhi"` for Vertex's `location:GEO_DISTANCE("New Delhi", 10000)` geocoder.
+   - **Neighborhood $\rightarrow$ Parent City Resolution (`SUBLOCALITY_TO_CITY_MAP`)**: Resolves neighborhoods (`"koramangala"`, `"whitefield"` $\rightarrow$ `"Bengaluru"`; `"lower parel"`, `"andheri"` $\rightarrow$ `"Mumbai"`) while preserving the neighborhood keyword for venue matching.
+   - **Format & Database-Quirk Expansion (`FORMAT_SPEC_MAP_V3`, `FORMAT_SPEC_MAP_V2`, `GENRE_BQ_EXPANSION`)**: Expands `"fmt": "4DX"` into all indexed BigQuery variants (`"4DX"`, `"4DX 3D"`, `"4DX 2D"`, `"MX4D"`, `"4DX-3D"`), normalizes `"Romance"` $\rightarrow$ `"Romantic"`, and expands `"Acoustic"` $\rightarrow$ `["Acoustic", "Accoustic"]` (covering the 379 rows in BigQuery spelled `"Accoustic"`).
+   - **Anti-Hallucination Grounding (`LANG_GROUNDING_STEMS`, `GENRE_GROUNDING_STEMS`)**: Drops any language, genre, or city emitted by the LLM that is not grounded in the user's query text.
+
+#### Why the LLM Cannot Handle This By Itself
+
+| Challenge | What Happens If Only the LLM Is Used | How `LLM + taxonomy.py` Solves It |
+| :--- | :--- | :--- |
+| **1. Gemma 3's 512-Token Sliding Window (`RotatingKVCache`)** | Local Gemma 3 (`1B` / `270M`) uses a **512-token local attention window** on 10 of its 12 layers. Stuffing 150+ city/locality mappings, 65 category slugs, and format rules into the prompt makes it **>2,500 tokens**—causing Gemma 3 to evict and forget the instructions. | Keeps the Gemma 3 prompt at **404 tokens** ([`build_gemma_chat_messages()`](./search_studio/prompts.py)) so 100% of the prompt stays inside the 512-token window. |
+| **2. Output Token Latency (~5–8 ms per generated token)** | Having the LLM generate verbose filter syntax like `formats: ANY("4DX", "4DX 3D", "4DX 2D", "MX4D") AND regions: ANY("National Capital Region (NCR)", "Delhi", "Gurgaon")` requires **60–90 output tokens (~450+ ms)**. | The LLM generates just `{"city":"Gurgaon","fmt":"4DX"}` (**~8 tokens, ~97 ms**), and `taxonomy.py` expands it in **0.05 ms** on CPU. |
+| **3. Exact Case-Sensitive BigQuery Values & Typos** | Vertex AI Agent Search `ANY("...")` is **100% exact-match**. An LLM naturally outputs `"Romance"` (0 rows in BQ, which uses `"Romantic"`), `"Bangalore"` (0 rows in BQ, which uses `"Bengaluru"`), `"Vizag"` (BQ uses `"Vizag (Visakhapatnam)"`), or `"Acoustic"` (missing the 379 `"Accoustic"` rows). | `taxonomy.py` deterministically maps every LLM output to the exact string(s) verified in BigQuery, preventing silent 0-match boosts. |
+| **4. Multi-Schema Support (`v2` vs. `v3`) from One LLM Call** | `v2` uses nested hyphenated formats (`sessions.format: ANY("IMAX-2D")`) while `v3` uses flat space-separated formats (`formats: ANY("IMAX 2D")`). A single LLM prompt would have to know which engine is being called and its exact schema quirks. | The LLM emits schema-agnostic JSON (`"fmt": "IMAX"`), and `taxonomy.py` compiles the exact `v2` or `v3` `conditionBoostSpecs` on the fly. |
+
+---
+
 ## 3. Configuration & Setup
 
 All project-specific identifiers and credentials are loaded from `config.local.json` (git-ignored) or environment variables via [`config.py`](./config.py). No project IDs, app names, or account emails are hardcoded in version-controlled files.

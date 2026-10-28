@@ -38,7 +38,10 @@ def load_ui_html() -> str:
 
 
 class RealtimeTestHandler(BaseHTTPRequestHandler):
+    """HTTP request handler serving the Search Studio UI (`GET /`) and JSON REST APIs (`/api/*`)."""
+
     def _send_json(self, status: int, data: Dict[str, Any]) -> None:
+        """Serialize `data` as UTF-8 JSON and write the HTTP response with CORS headers."""
         raw = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -48,6 +51,7 @@ class RealtimeTestHandler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def _send_html(self, html_str: str) -> None:
+        """Write an HTML response (`200 OK`) to the client."""
         raw = html_str.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -56,6 +60,7 @@ class RealtimeTestHandler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_OPTIONS(self) -> None:
+        """Handle CORS preflight `OPTIONS` requests."""
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -63,6 +68,7 @@ class RealtimeTestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
+        """Handle `GET /` (UI), `GET /api/presets`, and `GET /api/route_decision?query=...`."""
         parsed = urlparse(self.path)
         if parsed.path in ("/", "/index.html"):
             self._send_html(load_ui_html())
@@ -81,6 +87,7 @@ class RealtimeTestHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "Not found"})
 
     def do_POST(self) -> None:
+        """Handle `POST /api/route_decision`, `/api/search`, `/api/side_by_side`, `/api/compare_apps`, and `/api/explain`."""
         parsed = urlparse(self.path)
         length = int(self.headers.get("Content-Length", "0"))
         body = json.loads(self.rfile.read(length).decode("utf-8")) if length > 0 else {}
@@ -110,10 +117,12 @@ class RealtimeTestHandler(BaseHTTPRequestHandler):
             self._send_json(500, {"status": "ERROR", "error": str(exc)})
 
     def log_message(self, fmt: str, *args: Any) -> None:
+        """Suppress default per-request stderr access logs to keep console output clean."""
         return
 
 
 def main() -> None:
+    """Pre-warm the ECP proxy and local Metal GPU KV caches, then start `ThreadingHTTPServer` on `PORT`."""
     get_ecp_client()
     if HAS_MLX:
         with _MLX_GPU_LOCK:

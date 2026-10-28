@@ -69,7 +69,10 @@ except ImportError:
     ]
 
     class EcpClient:  # type: ignore[no-redef]
+        """Fallback HTTP client managing a local `ecp_http_proxy` subprocess and OAuth token refresh."""
+
         def __init__(self, port: int = 18895) -> None:
+            """Start local `ecp_http_proxy` on `port` and fetch initial OAuth access token."""
             self.port = port
             self._last_token_time = 0.0
             self.token = ""
@@ -78,6 +81,7 @@ except ImportError:
             self._start_proxy()
 
         def _start_proxy(self) -> None:
+            """Spawn `ecp_http_proxy` and poll `/readyz` until the local mTLS tunnel is ready."""
             self.close()
             self.proc = subprocess.Popen(
                 [ECP_HTTP_PROXY_BIN, "-enterprise_certificate_file_path", "/etc/certificate_config.json", "-nonce_token", "ent-setup-nonce", "-port", str(self.port)],
@@ -92,6 +96,7 @@ except ImportError:
                     time.sleep(0.1)
 
         def _refresh_token(self, force: bool = False) -> None:
+            """Refresh the cached `gcloud` OAuth bearer token every 4 minutes (or when forced on 401)."""
             now = time.time()
             if force or not self.token or (now - self._last_token_time) > 240:
                 cmd = ["gcloud", "auth", "print-access-token"]
@@ -101,6 +106,7 @@ except ImportError:
                 self._last_token_time = now
 
         def close(self) -> None:
+            """Terminate the background `ecp_http_proxy` subprocess cleanly."""
             if self.proc:
                 try:
                     self.proc.terminate()
@@ -110,6 +116,7 @@ except ImportError:
                 self.proc = None
 
     def extract_doc_summary(doc: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize a raw Discovery Engine `document` payload into a flat UI-ready hit dictionary."""
         sd = doc.get("structData", {}) or {}
         return {
             "id": doc.get("id", ""),
@@ -134,9 +141,11 @@ except ImportError:
         }
 
     def format_nlp_filters(nlp_info: Dict[str, Any]) -> str:
+        """Extract the human-readable filter string from `naturalLanguageQueryUnderstandingInfo`."""
         return (nlp_info.get("extractedFilters") or "").strip()
 
     def evaluate_hit(query_item: Dict[str, Any], hit: Dict[str, Any], extracted_filters: str = "") -> Tuple[bool, str]:
+        """Evaluate whether a returned search hit satisfies the query constraints."""
         return True, f"Matched {hit.get('record_type', 'record')}"
 
 import copy
@@ -193,6 +202,7 @@ DEFAULT_SEARCH_APP = "v3"
 
 
 def get_search_app_config(app_key: Optional[str]) -> Dict[str, Any]:
+    """Resolve `app_key` (`v3`, `v2`, or engine ID) to its `SEARCH_APPS` configuration dictionary."""
     key = str(app_key or DEFAULT_SEARCH_APP).strip().lower()
     if key in (ENGINE_ID_V2_RUNTIME.lower(), ENGINE_ID_V2_DISPLAY.lower(), "v2"):
         return SEARCH_APPS["v2"]
@@ -241,6 +251,7 @@ _MAX_NLU_CACHE = 512
 
 
 def get_ecp_client() -> EcpClient:
+    """Return the singleton `EcpClient` instance protected by `_CLIENT_LOCK`."""
     global _ECP_CLIENT
     with _CLIENT_LOCK:
         if _ECP_CLIENT is None:
@@ -324,6 +335,7 @@ def ecp_post(host: str, path: str, body: Dict[str, Any], user_project: str = PRO
 
 
 def _date_context() -> Dict[str, str]:
+    """Compute relative ISO-8601 date anchors (today, tomorrow, upcoming Friday/weekend, next week/month)."""
     today = datetime.date.today()
     tomorrow = today + datetime.timedelta(days=1)
     days_until_friday = (4 - today.weekday()) % 7

@@ -1,4 +1,13 @@
-"""Facet, Geography, Lat/Long Coordinate, Format, Genre, and Category Mappings."""
+"""Facet, Geography, Lat/Long Coordinate, Format, Genre, and Category Mappings.
+
+Why this module exists alongside the LLM (`search_studio/intent_extractor.py`):
+1. Keeps the Local Gemma 3 prompt under 405 tokens so 100% of instructions fit inside
+   Gemma 3's 512-token sliding-window `RotatingKVCache`.
+2. Expands compact LLM JSON slots (`{"city":"Gurgaon","fmt":"4DX"}`) in ~0.05 ms on CPU
+   into exact, case-sensitive BigQuery/Vertex `ANY(...)` filter strings (`v2` & `v3`).
+3. Resolves 100+ Indian neighborhoods/malls (`SUBLOCALITY_TO_CITY_MAP`) to their parent
+   city and provides anti-hallucination grounding stems (`LANG_GROUNDING_STEMS`, `GENRE_GROUNDING_STEMS`).
+"""
 
 from __future__ import annotations
 

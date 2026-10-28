@@ -20,6 +20,7 @@ from search_studio.taxonomy import (
 
 
 def _quote_any(values: List[str]) -> str:
+    """Format a list of string literals into Vertex AI Search `ANY(\"v1\", \"v2\")` syntax."""
     inner = ", ".join(f'"{v}"' for v in values)
     return f"ANY({inner})"
 
@@ -296,6 +297,7 @@ QUERY_FILLER_TOKENS = {
 
 
 def _is_city_grounded(canon_city: str, raw_city: Any, q_low: str) -> bool:
+    """Verify that `canon_city` (or a known neighborhood/alias of it) is present in `q_low`."""
     if not canon_city:
         return False
     if "near me" in q_low and canon_city == "Mumbai":
@@ -318,6 +320,7 @@ def _is_city_grounded(canon_city: str, raw_city: Any, q_low: str) -> bool:
 
 
 def _is_locality_grounded(clean_locality: str, q_low: str) -> bool:
+    """Verify that a sub-locality/neighborhood phrase is grounded in `q_low`."""
     if not clean_locality:
         return False
     loc_head = clean_locality.split(",")[0].strip()
@@ -333,16 +336,19 @@ def _is_locality_grounded(clean_locality: str, q_low: str) -> bool:
 
 
 def _is_lang_grounded(lang_canon: str, q_low: str) -> bool:
+    """Verify that `lang_canon` (or one of its linguistic stems in `LANG_GROUNDING_STEMS`) appears in `q_low`."""
     stems = LANG_GROUNDING_STEMS.get(lang_canon, (lang_canon.lower(),))
     return any(s in q_low for s in stems)
 
 
 def _is_genre_grounded(genre_canon: str, q_low: str) -> bool:
+    """Verify that `genre_canon` (or a synonym/stem in `GENRE_GROUNDING_STEMS`) appears in `q_low`."""
     stems = GENRE_GROUNDING_STEMS.get(genre_canon, (genre_canon.lower(),))
     return any(s in q_low for s in stems)
 
 
 def _is_artist_grounded(artist_clean: str, q_low: str) -> bool:
+    """Verify that `artist_clean` (or a nickname in `ARTIST_NICKNAME_MAP`) appears in `q_low`."""
     for nick, full_name in ARTIST_NICKNAME_MAP.items():
         if full_name.lower() == artist_clean.lower() and nick in q_low:
             return True
@@ -404,10 +410,12 @@ TIME_SLOT_GROUNDING: Dict[str, Tuple[str, ...]] = {
 
 
 def _is_offer_grounded(q_low: str) -> bool:
+    """Return True only when `q_low` contains explicit bank/card/discount/offer keywords."""
     return any(w in q_low for w in OFFER_GROUNDING_WORDS)
 
 
 def _is_when_grounded(when_tok: str, q_low: str) -> bool:
+    """Verify that a temporal token (`today`, `tonight`, `this_weekend`, etc.) is grounded in `q_low`."""
     stems = WHEN_TOKEN_GROUNDING.get(when_tok)
     if not stems:
         return any(w in q_low for w in ANY_TEMPORAL_GROUNDING_WORDS)
@@ -416,12 +424,14 @@ def _is_when_grounded(when_tok: str, q_low: str) -> bool:
 
 
 def _is_time_slot_grounded(slot_tok: str, q_low: str) -> bool:
+    """Verify that a time-of-day slot (`morning`, `afternoon`, `evening`, `night`) is grounded in `q_low`."""
     stems = TIME_SLOT_GROUNDING.get(slot_tok, (slot_tok,))
     q_words = set(q_low.replace(",", " ").split())
     return any((s in q_words if len(s) <= 2 else s in q_low) for s in stems)
 
 
 def _is_price_grounded(q_low: str) -> bool:
+    """Return True if `q_low` contains explicit price bounds (`under N`, `between M and N`, `free`, `cheapest`)."""
     import re
 
     if any(w in q_low for w in PRICE_GROUNDING_WORDS):
@@ -430,6 +440,7 @@ def _is_price_grounded(q_low: str) -> bool:
 
 
 def _coerce_price_int(val: Any, q_low: str) -> Optional[int]:
+    """Safely parse an integer INR price from an LLM slot value (`int`, `float`, or numeric string)."""
     import re
 
     if isinstance(val, (int, float)) and not isinstance(val, bool):
@@ -629,6 +640,7 @@ def _resolve_temporal_ranges(
 
 
 def _iter_slot_strings(val: Any) -> List[str]:
+    """Normalize a string or list of strings from an LLM JSON slot into a flat list of non-empty strings."""
     if isinstance(val, str) and val.strip():
         return [p.strip() for p in val.split(",") if p.strip()]
     if isinstance(val, list):

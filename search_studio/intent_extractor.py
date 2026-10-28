@@ -290,6 +290,7 @@ def resolve_gemini_endpoint_and_config(
     max_tokens_default: int = 320,
     temperature: float = 0.0,
 ) -> Tuple[str, str, str, str, Dict[str, Any]]:
+    """Resolve the Vertex AI mTLS host, REST path, and `generationConfig` for a Cloud Gemini model."""
     model = (model_name or "gemini-4-argon").strip()
     if model not in CLOUD_GEMINI_MODELS:
         model = "gemini-4-argon"
@@ -318,6 +319,7 @@ def resolve_gemini_endpoint_and_config(
 
 
 def extract_non_thought_json_text(resp_json: Dict[str, Any]) -> str:
+    """Extract the final non-thought JSON text part from a Vertex AI `generateContent` response."""
     parts = resp_json.get("candidates", [{}])[0].get("content", {}).get("parts", [])
     text_parts = [str(p.get("text", "")) for p in parts if isinstance(p, dict) and not p.get("thought") and p.get("text")]
     return text_parts[-1] if text_parts else "{}"
@@ -329,6 +331,7 @@ def extract_boosts_cloud_gemini(
     app_key: str = DEFAULT_SEARCH_APP,
     use_cache: bool = False,
 ) -> Dict[str, Any]:
+    """Extract 8-key JSON intent via Cloud Vertex AI Gemini and compile into `conditionBoostSpecs`."""
     resolved_model, gemini_region, gemini_host, gemini_path, gen_cfg = resolve_gemini_endpoint_and_config(
         model_name, max_tokens_default=320
     )

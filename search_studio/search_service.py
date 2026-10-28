@@ -49,6 +49,7 @@ from search_studio.prompts import build_explain_hit_prompt
 from search_studio.router_api import decide_query_route_gemma3
 
 def build_curl_command(payload: Dict[str, Any], search_path: str = SEARCH_PATH) -> str:
+    """Build a copy-pasteable, sanitized `curl` command for the Search Studio UI inspector drawer."""
     payload_str = json.dumps(payload, indent=2).replace(LEGACY_V2_LANGUAGES_FIELD, "languages").replace(CROWDING_FIELD, "entity_code")
     display_path = (
         search_path.replace(str(PROJECT_NUMBER), "<YOUR_PROJECT_NUMBER>")
@@ -117,6 +118,10 @@ def _compute_hit_distance_km(
 
 
 def run_live_search(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute a live Vertex AI Agent Search request supporting `auto_route` (Gemma 3 Router),
+    `llm_boost` (Local MLX / Cloud Gemini), `vertex_native` (Managed NLQU), or `none` (Pure BM25+Hybrid),
+    along with 3-ring Concentric Lat/Long `GEO_DISTANCE` proximity boosting and 0-hit fallback.
+    """
     query = str(params.get("query") or "").strip()
     if not query:
         raise ValueError("Query must not be empty.")
