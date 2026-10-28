@@ -181,3 +181,64 @@ curl -s -X POST "http://127.0.0.1:8080/api/search" \
     "page_size": 5
   }' | jq '{route: .route_decision.route, geo_filter: .geo_filter, top_hit: .hits[0]}'
 ```
+
+---
+
+## 4. Gemma 3 Router LLM Latency Benchmark (`/api/route_decision`)
+
+Benchmark across **30 uncached queries** (`use_cache=false`: 15 direct entity/title/offer lookups + 15 multi-constraint filter/boost queries) on Apple Metal GPU (`mlx-lm` with the pre-warmed **367-token** Router KV cache):
+
+### 4.1 Summary Latency Table
+
+| Configuration | Tokens Generated | Min | Mean | P50 (Median) | P90 | P95 | Max | HTTP P50 | `CALL_LLM_INTENT` Recall | Total Accuracy |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Gemma 3 1B (`include_reason=false`)** *(Production Fast Gate)* | ~6 toks | **43.5 ms** | **49.9 ms** | **53.1 ms** | **54.0 ms** | **54.1 ms** | **54.3 ms** | **54.2 ms** | **15/15 (100%)** | **27/30 (90.0%)** |
+| **Gemma 3 1B (`include_reason=true`)** *(UI Explain Mode)* | ~22 toks | **71.9 ms** | **114.4 ms** | **118.4 ms** | **146.8 ms** | **149.7 ms** | **164.2 ms** | **119.5 ms** | **15/15 (100%)** | **27/30 (90.0%)** |
+| **Gemma 3 270M (`include_reason=false`)** | ~6 toks | **20.4 ms** | **36.6 ms** | **24.3 ms** | **25.5 ms** | **31.3 ms** | 387.0 ms | **25.3 ms** | 15/15 (100%) | 16/30 (53.3%) |
+| **Gemma 3 270M (`include_reason=true`)** | ~22 toks | **39.8 ms** | **54.1 ms** | **53.2 ms** | **62.4 ms** | **66.5 ms** | **78.3 ms** | **54.3 ms** | 15/15 (100%) | 16/30 (53.3%) |
+| **Warm LRU Cache Hit (`use_cache=true`)** | 0 toks | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.8 ms** | **15/15 (100%)** | **27/30 (90.0%)** |
+
+### 4.2 Key Takeaways
+1. **Production Routing (`Gemma 3 1B` with `include_reason=false`) takes `~44–54 ms` (`P50 = 53.1 ms`)**:
+   - Because `decide_query_route_gemma3()` seeds generation with `{"route":"` and halts on the closing quote (`",`) when `include_reason=false`, it decodes only **~6 tokens** on top of the pre-warmed 367-token KV cache.
+   - `DIRECT_AGENT_SEARCH` queries complete in **`43.5–45.6 ms`**, bypassing the ~100–350 ms LLM Intent Extraction step.
+2. **UI Diagnostic Mode (`include_reason=true`) takes `~72–164 ms` (`P50 = 118.4 ms`)**:
+   - Generating the human-readable `"reason"` string adds **~65 ms** (~15–20 additional tokens).
+3. **100% Recall on Filter/Boost Queries (`15/15`)**:
+   - `Gemma 3 1B` achieved **100% recall (`15/15`)** on queries needing structured filter/boost compilation (cities, neighborhoods, price bounds, dates, time slots, formats, languages, genres, and negations).
+
+### 4.3 Per-Query Breakdown (`local:gemma-3-1b-it-qat-4bit`)
+
+| # | Query | Expected Route | Predicted Route | Fast (`include_reason=false`) | Full (`include_reason=true`) | Generated Router Reason |
+| :-: | :--- | :--- | :--- | :---: | :---: | :--- |
+| 1 | `Spider-Man: No Way Home` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **45.1 ms** | 89.6 ms | Direct movie title lookup with no facet filters |
+| 2 | `Pushpa 2: The Rule` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **45.4 ms** | 105.7 ms | Has movie title (Pushpa 2: The Rule) |
+| 3 | `Singham Again` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **43.7 ms** | 72.2 ms | Direct movie title lookup |
+| 4 | `Bhool Bhulaiyaa 3` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **44.9 ms** | 89.7 ms | Direct movie title lookup with no facet filters |
+| 5 | `Coldplay Music of the Spheres` | `DIRECT_AGENT_SEARCH` | `CALL_LLM_INTENT` ⚠️ | **52.9 ms** | 109.9 ms | Has format (Coldplay Music of the Spheres) |
+| 6 | `Zakir Khan show` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **44.3 ms** | 97.4 ms | Direct artist show lookup with no city or date filter |
+| 7 | `Arijit Singh` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **44.6 ms** | 72.8 ms | Direct artist name lookup |
+| 8 | `Diljit Dosanjh Dil-Luminati` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **45.6 ms** | 74.1 ms | Direct actor name lookup |
+| 9 | `Sunburn Arena` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **43.7 ms** | 96.2 ms | Direct movie title lookup with no city or date filter |
+| 10 | `Prithvi Theatre` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **43.7 ms** | 72.2 ms | Direct theatre name lookup |
+| 11 | `Nita Mukesh Ambani Cultural Centre` | `DIRECT_AGENT_SEARCH` | `CALL_LLM_INTENT` ⚠️ | **53.3 ms** | 110.0 ms | Has location (Nita Mukesh Ambani Cultural Centre) |
+| 12 | `ICICI credit card movie offer` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **45.0 ms** | 118.4 ms | Has format (ICICI credit card) and movie title (movie offer) |
+| 13 | `HDFC bank Buy 1 Get 1 offer` | `DIRECT_AGENT_SEARCH` | `CALL_LLM_INTENT` ⚠️ | **53.8 ms** | 135.3 ms | Has format (Buy 1 Get 1) and offers (HDFC bank) |
+| 14 | `Gladiator II` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **43.5 ms** | 88.2 ms | Direct movie title lookup with no facet filters |
+| 15 | `Kantara` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **43.7 ms** | 71.9 ms | Direct movie title lookup |
+| 16 | `IMAX 3D movies in Mumbai` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.8 ms** | 122.9 ms | Has format (IMAX 3D) and city (Mumbai) |
+| 17 | `hindi horror movie in imax this friday in pune` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.9 ms** | 147.1 ms | Has format (Hindi), movie type (horror), date (this Friday), and location (Pune) |
+| 18 | `concerts between 1000 and 3000 in delhi` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **54.1 ms** | 164.2 ms | Has category (concerts), price range (1000-3000), and city (Delhi) |
+| 19 | `standup comedy in koramangala tonight` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.7 ms** | 146.8 ms | Has location (Koramangala), date (tonight), and activity (standup comedy) |
+| 20 | `couple garba passes in ahmedabad under 1500` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **54.3 ms** | 131.7 ms | Has price (under 1500) and location (Ahmedabad) |
+| 21 | `cinemas near phoenix marketcity whitefield` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 134.8 ms | Has location (Phoenix Marketcity, Whitefield) and cinema type (cinemas) |
+| 22 | `funny movie without any horror` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 117.5 ms | Has genre (Comedy) and negative genre exclusion (without horror) |
+| 23 | `something after 9 pm near hitec city that isnt a movie` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.9 ms** | 151.8 ms | Has location (hitec city), time (after 9 pm), and exclusion (not a movie) |
+| 24 | `malayalam movies with english subtitles` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.2 ms** | 118.4 ms | Has language (Malayalam) and subtitle format (English subtitles) |
+| 25 | `recliner seats movie in gurgaon tomorrow evening` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.6 ms** | 139.3 ms | Has format (recliner seats), location (Gurgaon), and date (tomorrow evening) |
+| 26 | `kids magic show this weekend in chennai under 500` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **54.0 ms** | 143.6 ms | Has date (this weekend), location (Chennai), and price (under 500) |
+| 27 | `telugu action movie in 4dx this saturday in hyderabad` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **54.1 ms** | 127.6 ms | Has genre (Action), date (this Saturday), and location (Hyderabad) |
+| 28 | `late night movie shows in andheri tonight` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 130.7 ms | Has format (late night), city (Andheri), and date (Tonight) |
+| 29 | `plays in kolkata this sunday` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 118.7 ms | Has date (this sunday) and location (Kolkata) |
+| 30 | `free workshops in bangalore this weekend` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.3 ms** | 134.1 ms | Has category (workshops), location (Bangalore), and date (this weekend) |
+

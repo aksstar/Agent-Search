@@ -214,12 +214,30 @@ flowchart TB
 
 | Endpoint | Method | Description |
 | :--- | :---: | :--- |
-| `/` | `GET` | Serves the Search Studio UI ([`realtime_test_ui.html`](./realtime_test_ui.html)). |
+| `/` | `GET` | Serves the Search Studio UI ([`search_studio/ui.html`](./search_studio/ui.html)). |
 | `/api/route_decision` | `GET` / `POST` | **Gemma 3 Decision API**: Returns `{"call_llm_for_intent": bool, "route": "DIRECT_AGENT_SEARCH" \| "CALL_LLM_INTENT", "reason": "...", "router_latency_ms": ...}`. Supports `"include_reason": false` (~50 ms) and `"execute_search": true`. |
 | `/api/search` | `POST` | Runs a single live search (`"nlu_mode": "auto_route" \| "llm_boost" \| "vertex_native" \| "none"`), supporting `user_lat`, `user_lng`, and `user_radius_km`. |
 | `/api/side_by_side` | `POST` | Runs **Managed Vertex NLQU**, **Selected Boost LLM**, and **Gemma 3 Route Decision** concurrently on `v3` or `v2`. |
 | `/api/compare_apps` | `POST` | Runs the exact same query & NLU mode concurrently against **`v2` (`ent-bq-5stores-v2-app`)** and **`v3` (`ent-bq-5stores-master-v3-app`)**. |
 | `/api/explain` | `POST` | Diagnoses any ranked hit using `gemini-3.5-flash-lite` (`asia-south1`). |
+
+---
+
+### 2.4 Gemma 3 Router LLM Latency Benchmark (`/api/route_decision`)
+
+Live benchmark across **30 uncached queries** (`use_cache=false`: 15 direct entity/title/offer lookups + 15 multi-constraint filter/boost queries) on Apple Metal GPU (`mlx-lm` with the pre-warmed **367-token** Router KV cache in [`search_studio/router_api.py`](./search_studio/router_api.py)):
+
+| Configuration | Tokens Generated | Min | Mean | P50 (Median) | P90 | P95 | Max | HTTP P50 | `CALL_LLM_INTENT` Recall | Total Accuracy |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Gemma 3 1B (`include_reason=false`)** *(Production Fast Gate)* | ~6 toks | **43.5 ms** | **49.9 ms** | **53.1 ms** | **54.0 ms** | **54.1 ms** | **54.3 ms** | **54.2 ms** | **15/15 (100%)** | **27/30 (90.0%)** |
+| **Gemma 3 1B (`include_reason=true`)** *(UI Explain Mode)* | ~22 toks | **71.9 ms** | **114.4 ms** | **118.4 ms** | **146.8 ms** | **149.7 ms** | **164.2 ms** | **119.5 ms** | **15/15 (100%)** | **27/30 (90.0%)** |
+| **Gemma 3 270M (`include_reason=false`)** | ~6 toks | **20.4 ms** | **36.6 ms** | **24.3 ms** | **25.5 ms** | **31.3 ms** | 387.0 ms | **25.3 ms** | 15/15 (100%) | 16/30 (53.3%) |
+| **Gemma 3 270M (`include_reason=true`)** | ~22 toks | **39.8 ms** | **54.1 ms** | **53.2 ms** | **62.4 ms** | **66.5 ms** | **78.3 ms** | **54.3 ms** | 15/15 (100%) | 16/30 (53.3%) |
+| **Warm LRU Cache Hit (`use_cache=true`)** | 0 toks | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.8 ms** | **15/15 (100%)** | **27/30 (90.0%)** |
+
+> **Full 30-Query Breakdown**: See [Section 4.3 of `search_studio/README.md`](./search_studio/README.md#43-per-query-breakdown-localgemma-3-1b-it-qat-4bit) for the per-query latencies and generated router reasons.
+
+---
 
 ## 3. Configuration & Setup
 
