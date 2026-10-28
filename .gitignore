@@ -8,6 +8,14 @@ venv/
 .DS_Store
 .gcs_sync_state.json
 *.jsonl
+archive/
+reports/
 EVALUATION_135_QUERIES.md
+REAL_DATA_EVALUATION_135_QUERIES.md
+REAL_DATA_EVALUATION_135_QUERIES.html
 eval_135_results.json
 evaluate_all_queries.py
+eval_5stores_nlp_collapse_html.py
+setup_5stores_bq_and_vertex.py
+setup_5stores_master_v3_global.py
+create_5stores_unified_v2.py

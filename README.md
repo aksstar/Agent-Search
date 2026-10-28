@@ -1,19 +1,20 @@
-# Agent Search — Real-Time Entertainment Discovery, Dynamic Boosting & Document CRUD
+# Entertainment Agent Search — Master v3 Session-Grain Discovery, Local Gemma 3 Decision Router & Dynamic LLM Boosting
 
-An end-to-end reference implementation for **movies and live entertainment discovery** powered by **Google Cloud Agent Search (Discovery Engine)** and **Gemini 3.5 Flash-Lite**.
+An end-to-end architecture and real-time testing workbench for **5-Store Unified Entertainment Discovery (`movie`, `event`, `venue`, `artist`, `offer`)** powered by **Google Cloud Vertex AI Agent Search (Discovery Engine)**, **BigQuery Option-2 Session-Grain Flattening (`ent_5stores_master_v3`)**, and **Local Apple Metal GPU (`mlx-lm` Gemma 3 / Qwen 2.5) + Cloud Gemini (`gemini-3.5-flash-lite` / `gemini-4-argon`)**.
 
-This repository demonstrates how to:
-1. **Provision & Sync an Agent Search DataStore** with a 4-hour periodic GCS DataConnector (`14400s`) and an Enterprise Search Engine.
-2. **Perform Real-Time Document CRUD** (`Create`, `Batch Inline Import`, `GET + PATCH Modify`, and `DELETE`) directly against the Discovery Engine `documents` REST API without waiting for periodic GCS syncs.
-3. **Rank Results by Geolocation Proximity** using concentric `location_city:GEO_DISTANCE(lat, lng, radius_meters)` rings inside `conditionBoostSpecs`.
-4. **Translate Natural-Language & Hinglish Queries in Real Time** (`"stand up comedy tonight in pune"`, `"is weekend delhi mein kya chal raha hai"`, `"pottery classes every saturday in october"`) into structured search intents via **Gemini 3.5 Flash-Lite** and compile them deterministically into zero-error Agent Search `boostSpec` conditions.
+This repository provides:
+1. **Option-2 Session-Level Master Architecture (`v3` — `390,870` rows)**: Flattens `movie` and `event` inventory to **1 row per `(entity_code, venue_code, session_id)`** so `(formats, languages, min_price, show_dates, time_slots)` are bound to the exact show session with zero cross-session leakage, while `crowdingSpecs` on `entity_code` deduplicates results at query time.
+2. **Local Gemma 3 Query Decision Router (`GET/POST /api/route_decision`)**: Uses `mlx-community/gemma-3-1b-it-qat-4bit` with a pre-warmed **367-token** KV cache on Apple Metal GPU (~50–160 ms, 0 extra GPU RAM) to decide whether an incoming query should go **directly to Agent Search (`DIRECT_AGENT_SEARCH`)** or **call the LLM Intent Extractor (`CALL_LLM_INTENT`)**.
+3. **2-Stage LLM Slot Extraction $\rightarrow$ Deterministic Boost Compiler**: Extracts a compact 8-key JSON intent via Local Gemma 3 1B (`~97 ms`, **97.0% Top-1 accuracy across 135 queries**), Qwen 2.5 3B (`~180 ms`), or Cloud Gemini, and compiles schema-verified `conditionBoostSpecs` (`min_price`, `max_price`, `regions`, `formats`, `languages`, `show_dates`, `time_slots`).
+4. **Lat/Long Concentric Proximity Boosting (`GEO_DISTANCE`)**: Combines a top-level `location:GEO_DISTANCE(lat, lng, 3000000)` guard filter with 3 concentric distance-decay boost rings (`3 km` $\rightarrow$ `+0.95`, `10 km` $\rightarrow$ `+0.80`, `25 km` $\rightarrow$ `+0.55`) across all `movie`, `event`, and `15,219` `venue` rows in `v3`.
+5. **Separated Real-Time Web Backend & Clean Studio UI**: [`realtime_test_webapp.py`](./realtime_test_webapp.py) (backend API server on port `8080`) and [`realtime_test_ui.html`](./realtime_test_ui.html) (Side-by-Side NLQU vs. LLM Boost, Single-Engine Inspector, and `v2` vs. `v3` Head-to-Head Comparison).
 
 ---
 
 ## Table of Contents
 
 1. [Repository Structure](#1-repository-structure)
-2. [System Architecture](#2-system-architecture)
+2. [System Architecture Diagrams (Mermaid & ASCII)](#2-system-architecture)
 3. [Configuration & Setup](#3-configuration--setup)
 4. [Dataset Schema & Indexed Fields](#4-dataset-schema--indexed-fields)
 5. [Geolocation Boosting (`GEO_DISTANCE` Concentric Rings)](#5-geolocation-boosting-geo_distance-concentric-rings)
@@ -22,51 +23,194 @@ This repository demonstrates how to:
 8. [Latency Benchmark Report (`Single Query` vs. `Real-Time LLM Pipeline`)](#8-latency-benchmark-report-single-query-vs-real-time-llm-pipeline)
 9. [DataStore Document CRUD Guide (Create, Batch Insert, Modify, Delete)](#9-datastore-document-crud-guide-create-batch-insert-modify-delete)
 10. [Automated GCS Folder Watcher & Instant DataStore Sync](#10-automated-gcs-folder-watcher--instant-datastore-sync)
-11. [Quickstart & CLI Usage](#11-quickstart--cli-usage)
+11. [Real-Time Hybrid Query Router & `<1ms` Pre-Search Gate](#11-real-time-hybrid-query-router--1ms-pre-search-gate)
+12. [Quickstart & CLI Usage](#12-quickstart--cli-usage)
+13. [`filter` vs. `boostSpec` (`conditionBoostSpecs`) in the Agent Search API](#13-filter-vs-boostspec-conditionboostspecs-in-the-agent-search-api)
+14. [How `boostSpec` Numbers Are Calibrated (4-Tier Scoring Hierarchy)](#14-how-boostspec-numbers-are-calibrated-4-tier-scoring-hierarchy)
+15. [135-Query Live Top-10 Evaluation Summary](#15-135-query-live-top-10-evaluation-summary)
 
 ---
 
 ## 1. Repository Structure
 
-| File | Purpose |
+| File / Folder | Purpose |
 | :--- | :--- |
-| [`config.py`](./config.py) | Centralized configuration loader reading from environment variables or git-ignored `config.local.json` with safe fallback defaults. |
-| [`config.example.json`](./config.example.json) | Template configuration file containing placeholder GCP project, GCS, Discovery Engine, and Gemini model settings. |
-| [`generate_sample_data.py`](./generate_sample_data.py) | Deterministic dataset generator producing **234 structured entertainment records** (113 movies + 121 live events across 8 Indian cities) in [`sample_metadata_200.json`](./sample_metadata_200.json). |
-| [`setup_gcs_datastore.py`](./setup_gcs_datastore.py) | Converts JSON to JSONL, uploads to GCS, provisions the Discovery Engine GCS DataConnector (`PERIODIC` 4-hour sync) and Enterprise Search Engine, and verifies live search. |
-| [`watch_gcs_and_sync.py`](./watch_gcs_and_sync.py) | Watches `gs://{GCS_BUCKET}/{GCS_FOLDER}/*.jsonl` for newly uploaded or modified `.jsonl` files (tracking GCS `generation` & `md5Hash`) and immediately triggers an Agent Search DataStore import + connector sync. |
-| [`cloud_function_gcs_sync/`](./cloud_function_gcs_sync/) | Serverless **2nd-Gen Cloud Run Function** (`main.py`, `requirements.txt`, `deploy.sh`) triggered by Eventarc (`google.cloud.storage.object.v1.finalized`) whenever a `.jsonl` file is uploaded to GCS. |
-| [`manage_datastore_documents.py`](./manage_datastore_documents.py) | Real-time Document CRUD script demonstrating single creation (`POST`), batch inline import (`POST :import`), partial field modification (`GET` + `PATCH`), and deletion (`DELETE`). |
-| [`query_with_boost.py`](./query_with_boost.py) | Evaluates concentric `GEO_DISTANCE` proximity boosting and runs all 12 natural-language benchmark queries comparing baseline vs. boosted rankings. |
-| [`realtime_query_benchmark.py`](./realtime_query_benchmark.py) | End-to-end latency benchmark comparing **Single Query (Direct Search)** vs. **Real-Time Query Resolution (Gemini 3.5 Flash-Lite + Python Boost Compiler + Search)**. |
-| [`sample_metadata_200.json`](./sample_metadata_200.json) | Generated dataset of 234 movies and live events with geolocation coordinates, ISO-8601 `+05:30` showtimes, release dates, languages, formats, and hashtags. |
+| [`realtime_test_webapp.py`](./realtime_test_webapp.py) | Real-Time Search Backend API (`http://127.0.0.1:8080`) hosting `/api/route_decision` (Gemma 3 Router), `/api/search`, `/api/side_by_side`, `/api/compare_apps`, and `/api/explain`. |
+| [`realtime_test_ui.html`](./realtime_test_ui.html) | Clean Dark-Mode Search Studio UI dynamically loaded by `realtime_test_webapp.py` (Side-by-Side NLQU vs. LLM Boost, Single Inspector, `v2` vs. `v3` App Comparison, Lat/Long GPS Ring Booster). |
+| [`setup_gcs_datastore.py`](./setup_gcs_datastore.py) | Provisions GCS DataConnectors and Enterprise Search Engines from JSONL files. |
+| [`config.py`](./config.py) / [`config.example.json`](./config.example.json) | Centralized configuration loader reading from environment variables or git-ignored `config.local.json`. |
 
 ---
 
 ## 2. System Architecture
 
+### 2.1 End-to-End Mermaid Architecture Diagram
+
 ```mermaid
 flowchart TB
-    subgraph Ingestion["1. Ingestion & Real-Time Index Maintenance"]
+    %% ==================== STYLING ====================
+    classDef gcs fill:#1e293b,stroke:#38bdf8,stroke-width:1.5px,color:#f8fafc
+    classDef bq fill:#0f172a,stroke:#fbbf24,stroke-width:1.5px,color:#f8fafc
+    classDef vertex fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#f8fafc
+    classDef router fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#f8fafc
+    classDef llm fill:#3b0764,stroke:#c084fc,stroke-width:1.5px,color:#f8fafc
+    classDef compiler fill:#172554,stroke:#60a5fa,stroke-width:1.5px,color:#f8fafc
+    classDef ui fill:#090d16,stroke:#94a3b8,stroke-width:1.5px,color:#f8fafc
+
+    %% ==================== 1. DATA & INDEXING PLANE ====================
+    subgraph DataPlane["1. Data Ingestion & BigQuery Unification Plane (GCP: your-gcp-project-id)"]
         direction LR
-        GEN["generate_sample_data.py\n(234 Movies & Events)"] --> JSONL["GCS Bucket (*.jsonl)\n4-Hour Periodic Sync"]
-        JSONL --> WATCH["watch_gcs_and_sync.py\nDetects New/Updated GCS Files\n(generation / md5Hash)"]
-        WATCH --> DS[("Agent Search\nDataStore & Engine")]
-        CRUD["manage_datastore_documents.py\nReal-Time REST CRUD\n(POST / PATCH / DELETE)"] --> DS
+        GCS["GCS Source Bucket\ngs://your-gcs-bucket/entertainment_data\n• movies/*.jsonl\n• events/*.jsonl\n• venues.jsonl (15.2k)\n• artists.jsonl (157k)\n• offers.jsonl (652)"]:::gcs
+
+        BQ_EXT["5 BigQuery External Tables\nent_search_bq.ext_*\n(asia-south1)"]:::bq
+
+        subgraph BQ_Tables["BigQuery Native Tables"]
+            direction TB
+            BQ_V3["ent_5stores_master_v3 (v3 Master • 390,870 rows)\n• Option-2 Flat Session Grain: id = entity_code_venue_session\n• Exact session binding: (formats, languages, min_price, show_dates, time_slots)\n• COALESCE(b.location, b.geolocation) on movie, event & venue rows\n• Clean venue city in regions (0 active_regions 300-city pollution)"]:::bq
+            BQ_V2["ent_5stores_unified (v2 Legacy • 262,135 rows)\n• Entity + Venue Grain: id = entity_code_venue\n• Nested sessions[] array\n• Venue location = NULL"]:::bq
+        end
+
+        subgraph Vertex_Engines["Vertex AI Agent Search (Discovery Engine • global)"]
+            direction TB
+            VS_V3[("v3 Master Search App\nent-bq-5stores-master-v3-app\n• Curated Schema: 14 Indexable / 11 Searchable\n• 0 Dynamic Facets")]:::vertex
+            VS_V2[("v2 Legacy Search App\nent-bq-5stores-v2-app\n• 38 Indexable / 42 Retrievable\n• Managed NLQU Enabled")]:::vertex
+        end
+
+        GCS --> BQ_EXT
+        BQ_EXT --> BQ_V3
+        BQ_EXT --> BQ_V2
+        BQ_V3 -->|"BigQuery Batch Import"| VS_V3
+        BQ_V2 -->|"BigQuery Batch Import"| VS_V2
     end
 
-    subgraph QueryPlane["2. Real-Time Query Understanding & Dynamic Boosting"]
-        direction LR
-        UQ["User Query\n'stand up comedy tonight in pune'\n+ Current Time (ISO-8601)\n+ User GPS / City"] --> LLM["Stage 1: Gemini 3.5 Flash-Lite\n(Structured JSON Schema)"]
-        LLM --> INTENT["ExtractedSearchIntent\n• search_query: 'standup comedy'\n• city: 'Pune'\n• time_windows: [17:00..23:59]\n• hash_tags: ['STANDUP_COMEDY']"]
-        INTENT --> COMP["Stage 2: Deterministic Python\ncompile_boost_specs()"]
-        COMP --> SEARCH["Stage 3: Agent Search\nservingConfigs/default_search:search"]
+    %% ==================== 2. REAL-TIME QUERY & DECISION PLANE ====================
+    subgraph RuntimePlane["2. Real-Time Query Routing, LLM Slot Extraction & Boost Compilation (realtime_test_webapp.py)"]
+        direction TB
+        UI["Search Studio UI (realtime_test_ui.html) / API Client\n• Query: 'concerts between 1000 and 3000 in delhi' or 'Spider-Man: No Way Home'\n• Optional User GPS: (user_lat, user_lng, user_radius_km)"]:::ui
+
+        ROUTER{"Step 0: Gemma 3 Decision API\nPOST /api/route_decision\nLocal Metal GPU: gemma-3-1b-it-qat-4bit\n(367-tok KV Cache • ~50–160 ms)"}:::router
+
+        DIRECT_PATH["Route A: DIRECT_AGENT_SEARCH\ncall_llm_for_intent = false\n• Pure Movie / Event / Artist / Venue / Offer Name\n• 0 ms LLM Intent Overhead"]:::compiler
+
+        subgraph LLM_Intent_Stage["Route B: CALL_LLM_INTENT (call_llm_for_intent = true)"]
+            direction LR
+            LLM_EXTRACT["Step 1: 8-Key JSON Slot Extractor\n• Local Metal GPU (mlx-lm):\n  - gemma-3-1b-it-qat-4bit (~97 ms • 97.0% Top-1)\n  - gemma-3-270m-it-qat-4bit (~55 ms)\n  - Qwen2.5-3B-Instruct-4bit (~180 ms)\n• Cloud Vertex AI:\n  - gemini-3.5-flash-lite / gemini-4-argon"]:::llm
+
+            SLOTS["Extracted JSON Slots\n• q: 'concerts'\n• type: 'event'\n• city: 'Delhi NCR'\n• min_price: 1000, max_price: 3000\n• formats / langs / dates / time_slots"]:::llm
+            LLM_EXTRACT --> SLOTS
+        end
+
+        COMPILER["Step 2: Deterministic Boost & Geo Compiler\ncompile_boost_specs_from_intent()\n• Price Range: min_price >= 1000 AND min_price <= 3000 (+0.85)\n• City Expand: regions: ANY('Delhi','New Delhi','Gurugram','Noida') (+0.85)\n• Format / Language / Date / Time-Slot Boosts (+0.75 to +0.85)\n• Negative Exclusions (-0.90)"]:::compiler
+
+        GEO_BOOST["Step 2b: Lat/Long Concentric Proximity Booster\n• Guard Filter: location:GEO_DISTANCE(lat, lng, 3000000)\n• Ring 1 (<= 3 km): +0.95\n• Ring 2 (<= 10 km): +0.80\n• Ring 3 (<= 25 km): +0.55"]:::compiler
+
+        DISPATCH["Step 3: Discovery Engine Search Dispatcher (mTLS / ECP)\n• servingConfigs/default_search:search\n• crowdingSpecs: field='entity_code', maxCount=1 (Deduplicate Sessions)\n• Auto 0-Hit Sub-Locality Geo Fallback\n• Haversine Distance Pill (km away) & Rule Verdict Evaluator"]:::vertex
+
+        UI --> ROUTER
+        ROUTER -->|"call_llm_for_intent: false\n(Entity / Title Lookup)"| DIRECT_PATH
+        ROUTER -->|"call_llm_for_intent: true\n(City / Price / Date / Format / Genre)"| LLM_EXTRACT
+        DIRECT_PATH --> GEO_BOOST
+        SLOTS --> COMPILER
+        COMPILER --> GEO_BOOST
+        GEO_BOOST --> DISPATCH
     end
 
-    DS --- SEARCH
+    DISPATCH <-->|"HTTPS POST :search (~180-350 ms)"| VS_V3
+    DISPATCH <-->|"HTTPS POST :search (v2 vs v3 Compare)"| VS_V2
 ```
 
 ---
+
+### 2.2 End-to-End ASCII Architecture Blueprint
+
+```text
++======================================================================================================+
+|                        1. DATA INGESTION & BIGQUERY SESSION-GRAIN UNIFICATION                        |
++======================================================================================================+
+  gs://your-gcs-bucket/entertainment_data/{movies/*.jsonl, events/*.jsonl, venues.jsonl, artists, offers}
+                                                   |
+                                                   v
+               BigQuery External Tables (ent_search_bq.ext_movies / ext_events / ...)
+                          /                                                 \
+                         v                                                   v
+  +-----------------------------------------------+   +-----------------------------------------------+
+  | ent_5stores_master_v3 (v3 Master • 390,870)   |   | ent_5stores_unified (v2 Legacy • 262,135)     |
+  | • Option-2 Session Grain:                     |   | • Entity + Venue Grain: <entity_code>_<venue>      |
+  |   id = <entity_code>_<venue_code>_<session_id>     |   | • Nested sessions[] array (cross-session bag) |
+  | • Exact session binding: formats, languages,  |   | • Venue location = NULL                       |
+  |   min_price, show_dates, time_slots           |   +-----------------------------------------------+
+  | • COALESCE(location, geolocation) on ALL      |                          |
+  |   movie, event, AND 15,219 venue rows         |                          v
+  +-----------------------------------------------+   +-----------------------------------------------+
+                         |                            | Vertex App: ent-bq-5stores-v2-app             |
+                         v                            +-----------------------------------------------+
+  +-----------------------------------------------+
+  | Vertex App: ent-bq-5stores-master-v3-app      |
+  | • 14 Indexable / 11 Searchable / 0 Dyn Facets |
+  +-----------------------------------------------+
+
++======================================================================================================+
+|                 2. REAL-TIME QUERY ROUTING, LLM INTENT & BOOST PIPELINE (PORT 8080)                  |
++======================================================================================================+
+  Incoming User Query + Optional (user_lat, user_lng, user_radius_km)
+         |
+         v
+  +---------------------------------------------------------------------------------------------------+
+  | STEP 0: Local Gemma 3 Decision API (`POST /api/route_decision`)                                   |
+  | • Model: `mlx-community/gemma-3-1b-it-qat-4bit` on Apple Metal GPU (367-token pre-warmed KV)      |
+  | • Latency: ~50 ms (route token only) / ~140 ms (with JSON reason) | 0 Extra GPU RAM               |
+  +---------------------------------------------------------------------------------------------------+
+                     /                                                       \
+   call_llm_for_intent = false                                 call_llm_for_intent = true
+   (route = "DIRECT_AGENT_SEARCH")                             (route = "CALL_LLM_INTENT")
+   Pure Movie / Artist / Venue / Offer                         Has City, Price, Date, Slot, Format,
+   e.g. "Spider-Man: No Way Home"                              Language, Category, or Negation
+                   /                                                           \
+                  /                                                             v
+                 |                                    +-----------------------------------------------+
+                 |                                    | STEP 1: LLM Compact 8-Key Slot Extraction     |
+                 |                                    | • Local Metal GPU (`gemma-3-1b-it-qat-4bit`)  |
+                 |                                    |   404-token KV cache -> ~97 ms (97.0% Top-1)  |
+                 |                                    | • Outputs: {q, type, city, locality, langs,   |
+                 |                                    |   genres, formats, time_slots, min/max_price} |
+                 |                                    +-----------------------------------------------+
+                 |                                                              |
+                 |                                                              v
+                 |                                    +-----------------------------------------------+
+                 |                                    | STEP 2: Deterministic Boost Compiler          |
+                 |                                    | `compile_boost_specs_from_intent()` (~0.05ms) |
+                 |                                    | • Price: min_price >= 1000 AND <= 3000 (+0.85)|
+                 |                                    | • City/NCR: regions: ANY(...) (+0.85)         |
+                 |                                    | • Formats / Languages / Dates / Time Slots    |
+                 |                                    +-----------------------------------------------+
+                  \                                                            /
+                   \________________________          ________________________/
+                                            \        /
+                                             v      v
+  +---------------------------------------------------------------------------------------------------+
+  | STEP 2b: Lat/Long Concentric Proximity Booster (when `user_lat` & `user_lng` provided)            |
+  | • Guard Filter: `filter: "location:GEO_DISTANCE(lat, lng, 3000000)"`                              |
+  | • Concentric Rings: <= 3 km (+0.95) | <= 10 km (+0.80) | <= 25 km (+0.55)                         |
+  +---------------------------------------------------------------------------------------------------+
+                                                |
+                                                v
+  +---------------------------------------------------------------------------------------------------+
+  | STEP 3: Vertex AI Agent Search (`servingConfigs/default_search:search`)                           |
+  | • `crowdingSpecs`: `{"field": "entity_code", "maxCount": 1, "mode": "DROP_CROWDED_RESULTS"}`           |
+  | • Auto 0-hit sub-locality fallback + Haversine distance (`km away`) + Live Explain (`asia-south1`)|
+  +---------------------------------------------------------------------------------------------------+
+```
+
+### 2.3 API Endpoints Exposed by `realtime_test_webapp.py`
+
+| Endpoint | Method | Description |
+| :--- | :---: | :--- |
+| `/` | `GET` | Serves the Search Studio UI ([`realtime_test_ui.html`](./realtime_test_ui.html)). |
+| `/api/route_decision` | `GET` / `POST` | **Gemma 3 Decision API**: Returns `{"call_llm_for_intent": bool, "route": "DIRECT_AGENT_SEARCH" \| "CALL_LLM_INTENT", "reason": "...", "router_latency_ms": ...}`. Supports `"include_reason": false` (~50 ms) and `"execute_search": true`. |
+| `/api/search` | `POST` | Runs a single live search (`"nlu_mode": "auto_route" \| "llm_boost" \| "vertex_native" \| "none"`), supporting `user_lat`, `user_lng`, and `user_radius_km`. |
+| `/api/side_by_side` | `POST` | Runs **Managed Vertex NLQU**, **Selected Boost LLM**, and **Gemma 3 Route Decision** concurrently on `v3` or `v2`. |
+| `/api/compare_apps` | `POST` | Runs the exact same query & NLU mode concurrently against **`v2` (`ent-bq-5stores-v2-app`)** and **`v3` (`ent-bq-5stores-master-v3-app`)**. |
+| `/api/explain` | `POST` | Diagnoses any ranked hit using `gemini-3.5-flash-lite` (`asia-south1`). |
 
 ## 3. Configuration & Setup
 
@@ -591,4 +735,158 @@ python query_with_boost.py \
   -b 0.8
 ```
 
+---
+
+## 13. `filter` vs. `boostSpec` (`conditionBoostSpecs`) in the Agent Search API
+
+Both **`filter`** and **`boostSpec`** (`conditionBoostSpecs`) are natively supported in the `POST .../servingConfigs/default_search:search` REST API (and in [`search_with_boost()`](./query_with_boost.py)), and both use the **exact same Discovery Engine filter expression syntax** on fields marked `indexableOption: INDEXABLE_ENABLED`. However, their runtime behavior is fundamentally different:
+
+### 13.1 Core Comparison: Hard Exclusion (`filter`) vs. Soft Re-Ranking (`boostSpec`)
+
+| Aspect | `filter` (Hard Filter) | `boostSpec` (`conditionBoostSpecs`) |
+| :--- | :--- | :--- |
+| **Behavior** | **Strictly excludes** any document that does not match the boolean expression. | **Adjusts the relevance score** (`boost` in `[-1.0, 1.0]`) of matching documents without removing non-matching documents. |
+| **Zero-Result Risk** | **High** — if any single constraint in the `filter` fails to match (e.g., an artist tour isn't in that city yet or metadata is missing), the API returns `0 results`. | **Zero** — if no document matches all boost conditions, the API gracefully falls back to partial matches or lexical/semantic hits. |
+| **Unified Multi-DataStore Behavior** (`unified-ent-search`) | **Drops entire DataStores** if they do not have that schema field. For example, `filter: 'active_regions: ANY("Mumbai")'` completely eliminates `ent-venues`, `ent-offers`, and `ent-artists` because those 3 DataStores do not have `active_regions`. | **Safe across blended DataStores** (as long as a single condition does not mix incompatible field paths) — boosts matching movies/events to `#1` while still allowing venues, artists, or offers to appear when relevant. |
+| **Negative Constraints** | Uses `NOT` to hard-drop documents (e.g., `NOT genres: ANY("Horror")`). | Uses a **negative boost** (`"boost": -0.9`) to push unwanted items to the bottom without breaking recall. |
+| **Stacking Multiple Rules** | Must be combined into a single boolean string (`AND` / `OR`). | Accepts an **array of independent rules** with distinct weights (e.g., `+0.8` for `LIVE_IN_CINEMAS`, `+0.65` for city, `+0.55` for language, `+0.45` for genre). |
+
+---
+
+### 13.2 How to Pass `filter` and `boostSpec` Together in the API
+
+#### `curl` Example
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" \
+  "https://discoveryengine.googleapis.com/v1alpha/projects/YOUR_PROJECT_NUMBER/locations/global/collections/default_collection/engines/ent-bq-5stores-master-v3-app/servingConfigs/default_search:search" \
+  -d '{
+    "query": "stand up comedy",
+    "pageSize": 10,
+    "filter": "regions: ANY(\"Pune\")",
+    "boostSpec": {
+      "conditionBoostSpecs": [
+        {
+          "condition": "show_dates >= \"2026-10-12\"",
+          "boost": 0.8
+        },
+        {
+          "condition": "genres: ANY(\"Comedy\")",
+          "boost": 0.5
+        }
+      ]
+    }
+  }'
+```
+
+#### Python Example ([`query_with_boost.py`](./query_with_boost.py))
+```python
+from query_with_boost import search_with_boost
+
+resp = search_with_boost(
+    query="stand up comedy",
+    filter_expr='regions: ANY("Pune")',
+    condition_boost_specs=[
+        {"condition": 'show_dates >= "2026-10-12"', "boost": 0.8},
+        {"condition": 'genres: ANY("Comedy")', "boost": 0.5},
+    ],
+)
+```
+
+---
+
+### 13.3 Why We Use `boostSpec` for Natural-Language Search Across the 5 Unified DataStores
+
+1. **Cross-DataStore Schema Differences (`ent-movies`, `ent-events`, `ent-venues`, `ent-offers`, `ent-artists`)**:
+   - Only `ent-movies` and `ent-events` have `active_regions`, `genres`, `languages`, and `hash_tags`.
+   - Sending a hard `"filter": "active_regions: ANY(\"Mumbai\")"` automatically excludes all venues (`ent-venues`), bank offers (`ent-offers`), and artist profiles (`ent-artists`).
+2. **Preventing `0 results` on Entity/Tour Queries**:
+   - For queries like `"anuv jain kochi november"` or `"bassi show dates in hyderabad"`, the artist's tour is active in the catalog (`Route 143 - Anuv Jain`, `Kisi Ko Batana Mat Ft. Anubhav Singh Bassi`), but `active_regions` only lists `Chennai` or `Gondal, Dholpur`.
+   - A hard `filter` on the requested city returns **`0 results`**, whereas `boostSpec` still surfaces the artist's tour at `#1` while prioritizing city matches whenever available.
+3. **Production Recommendation (Hybrid `filter` + `boostSpec`)**:
+   - **Use `filter`** for explicit UI facet selections or hard vertical tabs (e.g., user selects the **"Movies"** tab $\rightarrow$ `filter: 'vertical: ANY("movies")'`).
+   - **Use `boostSpec`** for natural-language query intents (date windows, genres, formats, languages, geo-distance rings, negative constraints) so active, city-matched inventory ranks `#1` without risking empty search pages.
+
+---
+
+## 14. How `boostSpec` Numbers Are Calibrated (4-Tier Scoring Hierarchy)
+
+The `boost` values in `conditionBoostSpecs` are calibrated around **Discovery Engine's `[-1.0, +1.0]` boost scale** and a **strict 4-tier priority hierarchy** so that partial matches on expired/archive records never outrank active, in-city inventory.
+
+### 14.1 API Bounds & Additive Stacking Rule
+- Every `boost` parameter in `conditionBoostSpecs` must be a float in **`[-1.0, +1.0]`**:
+  - **`+0.0`**: No change to the base relevance (lexical + semantic) score.
+  - **`+1.0`**: Maximum positive promotion.
+  - **`-1.0`**: Maximum demotion (pushes matching items to the bottom).
+- When a document satisfies **multiple** `conditionBoostSpecs`, Discovery Engine **accumulates** their boost scores on top of the base lexical/semantic relevance score.
+
+---
+
+### 14.2 The 4-Tier Weight Hierarchy
+
+If every condition were given the same flat weight (e.g., `+0.8` for everything), an **expired 2012 archive movie** that matches `Language + Genre` (`0.8 + 0.8 = +1.6`) would outrank a **currently running 2026 movie** in the user's city (`+0.8`).
+
+To prevent archive/wrong-city inversions, weights are assigned in **4 tiers** (used in [`realtime_hybrid_router.py`](./realtime_hybrid_router.py) and [`query_with_boost.py`](./query_with_boost.py)):
+
+| Priority Tier | Constraint Type | Boost Range | Rationale |
+| :--- | :--- | :---: | :--- |
+| **Tier 0: Negative Exclusions** | `without horror`, `not a movie`, `not a cartoon`, seed artist in `"like X"` | **`-0.85` to `-0.95`** | **Highest magnitude**. Violating an explicit negation (showing a Horror movie when the user asked `"without any horror"`) is an immediate user-facing failure, so it must overwhelm any lexical match. |
+| **Tier 1: Live Status & Date Window** | `hash_tags: ANY("LIVE_IN_CINEMAS", "LIVE_IN_VENUES")`<br>`show_dates >= "2026-10-12"` | **`+0.80` to `+0.90`** | **Strongest positive boost**. Historical archive titles (`2007–2025`) have high lexical overlap with query words (`"A Weekend"`, `"Date Night"`, `"Trending"`). A `+0.80` to `+0.90` boost ensures live bookable inventory beats expired archive records. |
+| **Tier 2: Location / City / Neighborhood** | `regions: ANY("Pune")`<br>Sub-locality venue match | **`+0.65` to `+0.85`** | **Second strongest positive boost**. A user asking for `"stand up comedy tonight in pune"` cannot attend a Delhi show. Setting City to `+0.65–0.85` ensures in-city live events beat out-of-city live events. |
+| **Tier 3: Vertical, Language, Genre, Format** | `vertical: ANY("movies")`<br>`languages: ANY("Telugu")`<br>`genres: ANY("Comedy")`<br>`formats: ANY("IMAX 2D")` | **`+0.45` to `+0.65`** | **Refinement boosts**. These break ties *among* active, in-city documents without letting an expired archive movie with the right genre beat a live movie. |
+
+---
+
+### 14.3 Concrete Scoring Math Example
+
+For the query **`"telugu comedy movie this weekend in hyderabad"`**, the compiled `conditionBoostSpecs` assign:
+- `hash_tags: ANY("LIVE_IN_CINEMAS")` $\rightarrow$ **`+0.80`**
+- `regions: ANY("Hyderabad")` $\rightarrow$ **`+0.65`**
+- `languages: ANY("Telugu")` $\rightarrow$ **`+0.55`**
+- `genres: ANY("Comedy")` $\rightarrow$ **`+0.45`**
+
+Candidate cumulative boost scores:
+1. **Live Telugu Comedy Movie in Hyderabad** (`LIVE` + `Hyderabad` + `Telugu` + `Comedy`):
+   $$\text{Cumulative Boost} = 0.80 + 0.65 + 0.55 + 0.45 = \mathbf{+2.45} \quad (\text{Rank \#1})$$
+2. **Live Telugu Drama Movie in Hyderabad** (`LIVE` + `Hyderabad` + `Telugu`):
+   $$\text{Cumulative Boost} = 0.80 + 0.65 + 0.55 = \mathbf{+2.00} \quad (\text{Rank \#2})$$
+3. **Expired 2015 Archive Telugu Comedy Movie** (`ARCHIVE`, `regions: []`, matches `Telugu` + `Comedy`):
+   $$\text{Cumulative Boost} = 0.55 + 0.45 = \mathbf{+1.00} \quad (\text{Ranked below Live Hyderabad movies})$$
+
+---
+
+### 14.4 Why Concentric `GEO_DISTANCE` Rings Use `0.40, 0.30, 0.20, 0.10`
+
+Because `GEO_DISTANCE(lat, lon, radius_meters)` in Discovery Engine is a **flat boolean circle** (every venue inside the circle gets the exact same boost), we stack 4 concentric rings whose weights **sum to `+1.00`** (see [`geo_rings()`](./evaluate_all_queries.py)):
+
+| Ring Radius | Individual Ring Boost | Cumulative Boost Received by a Venue at That Distance |
+| :--- | :---: | :--- |
+| **$\le 50\text{ km}$ (Same City)** | `+0.40` | Matches all 4 rings: `0.40 + 0.30 + 0.20 + 0.10` = **`+1.00`** |
+| **$\le 300\text{ km}$ (Nearby Metro)** | `+0.30` | Matches 3 outer rings: `0.30 + 0.20 + 0.10` = **`+0.60`** |
+| **$\le 800\text{ km}$ (Same Region)** | `+0.20` | Matches 2 outer rings: `0.20 + 0.10` = **`+0.30`** |
+| **$\le 1500\text{ km}$ (National)** | `+0.10` | Matches 1 outer ring: **`+0.10`** |
+| **$> 1500\text{ km}$** | `0.00` | Matches 0 rings: **`0.00`** |
+
+---
+
+## 15. 135-Query Live Top-10 Evaluation Summary
+
+Full evaluation details across all 135 queries and 12 categories are documented in [`reports/REAL_DATA_EVALUATION_135_QUERIES.md`](./reports/REAL_DATA_EVALUATION_135_QUERIES.md) and [`reports/REAL_DATA_EVALUATION_135_QUERIES.html`](./reports/REAL_DATA_EVALUATION_135_QUERIES.html).
+
+| Evaluation Mode | ✅ PASS | ⚠️ PARTIAL | ❌ FAIL | Usable (PASS + PARTIAL) | Mean Latency | Median (P50) Latency |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **1. Direct Single-Hit WITHOUT Boost** (Exact User `curl`) | **60 / 135 (44.4%)** | 21 / 135 (15.6%) | 54 / 135 (40.0%) | 81 / 135 (60.0%) | `519 ms` | `513 ms` |
+| **2. Real-Time Hybrid Router + Top-10 Validator** (`realtime_hybrid_router.py`, `page_size=10`) | **118 / 135 (87.4%)** | 17 / 135 (12.6%) | **0 / 135 (0.0%)** | **135 / 135 (100.0%)** | `668 ms` (Route A P50: `525 ms`) | `530 ms` |
+
+### Key Router & Top-10 Re-Ranker Rules Verified Across All 135 Queries
+1. **`128 / 135` Queries Resolved via Route A (`<1 ms` Deterministic Parse, `0` LLM Calls)**:
+   - Expanded `CITY_ALIASES` (all 14 cities + sub-localities), `VENUE_SEEKING_PATTERNS` (routes explicit cinema/hall queries directly to `ent-venues` with `location.lat`/`location.lon` bounding boxes), and `DETERMINISTIC_PHRASE_RULES` (typos, Hinglish/Tamil/Telugu/Kannada/Bengali/Marathi vernacular, and artist/movie entities).
+   - Only `7 / 135` open-ended similarity/recommendation queries (`"movies like kantara"`, `"comedians like zakir khan"`, `"music gigs similar to prateek kuhad"`, `"something to take my parents to on their anniversary"`) invoke Route B (Gemini Flash-Lite).
+2. **Cross-DataStore Boost Validation Guard (`0` HTTP 400 Errors)**:
+   - Prevents mixing `ent-movies`-only `formats` with `ent-events`-only `event_dates` in a single `conditionBoostSpecs` list.
+3. **Default Active-Window Boosts for Movies & Events**:
+   - Movie queries without an explicit release window automatically boost `release_date >= "2026-07-01T00:00:00Z"` (`+0.85`), and event queries without an explicit date automatically boost `event_dates >= "2026-10-12T00:00:00Z"` (`+0.85`), preventing expired 1991–2025 archive records from outranking live 2026 inventory.
+4. **Full Top-10 Multi-Constraint Re-Ranking (`validate_and_rerank_candidates`)**:
+   - Sorts all 10 candidates by `(req_type_ok, title_entity_match, artist_entity_match, zero_violations, type_ok, neg_genre_ok, is_active, city_match, lang_match, fmt_match, genre_match, -original_rank)` in `<0.1 ms` so out-of-city, archived/TVOD, or wrong-language items never rank above compliant candidates anywhere in Top-10.
 

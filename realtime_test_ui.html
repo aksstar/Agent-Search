@@ -1,0 +1,2049 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Entertainment Search Studio — Realtime NLU &amp; Boost Inspector</title>
+  <style>
+    :root {
+      --bg-canvas: #090d16;
+      --bg-surface: #111827;
+      --bg-elevated: #161f33;
+      --bg-card: #131b2e;
+      --bg-card-hover: #18233a;
+      --bg-input: #0b101d;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.14);
+      --text: #f1f5f9;
+      --text-secondary: #cbd5e1;
+      --muted: #64748b;
+      --accent: #38bdf8;
+      --accent-soft: rgba(56, 189, 248, 0.12);
+      --purple: #a855f7;
+      --purple-soft: rgba(168, 85, 247, 0.12);
+      --pass: #10b981;
+      --pass-soft: rgba(16, 185, 129, 0.12);
+      --fail: #f43f5e;
+      --fail-soft: rgba(244, 63, 94, 0.12);
+      --warn: #f59e0b;
+      --warn-soft: rgba(245, 158, 11, 0.12);
+      --brand: #e11d48;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 12px;
+      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+      --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.35);
+      --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+      --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: var(--font-sans);
+      background: var(--bg-canvas);
+      color: var(--text);
+      font-size: 13.5px;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ==================== TOP NAVIGATION BAR ==================== */
+    header {
+      background: rgba(17, 24, 39, 0.88);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-logo {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      background: linear-gradient(135deg, #f43f5e, #e11d48);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 800;
+      color: #fff;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(225, 29, 72, 0.4);
+    }
+
+    .brand-title {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: #f8fafc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .header-Right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .env-pills {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .env-pill {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .env-pill.purple {
+      background: var(--purple-soft);
+      color: #d8b4fe;
+      border-color: rgba(168, 85, 247, 0.3);
+    }
+
+    .env-pill.local {
+      background: var(--pass-soft);
+      color: #6ee7b7;
+      border-color: rgba(16, 185, 129, 0.3);
+    }
+
+    .env-pill.v3 {
+      background: var(--accent-soft);
+      color: #7dd3fc;
+      border-color: rgba(56, 189, 248, 0.28);
+    }
+
+    /* Segmented Tab Bar */
+    .tab-bar {
+      display: inline-flex;
+      background: var(--bg-input);
+      padding: 3px;
+      border-radius: 9px;
+      border: 1px solid var(--border);
+      gap: 2px;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border-radius: 6px;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .tab-btn:hover {
+      color: var(--text);
+    }
+
+    .tab-btn.active {
+      color: #fff;
+      background: var(--bg-elevated);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .tab-badge {
+      background: rgba(56, 189, 248, 0.16);
+      color: #7dd3fc;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    /* ==================== MAIN LAYOUT ==================== */
+    .layout {
+      display: grid;
+      grid-template-columns: 310px 1fr;
+      min-height: calc(100vh - 53px);
+    }
+
+    @media (max-width: 1024px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* ==================== SIDEBAR ==================== */
+    .sidebar {
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+      max-height: calc(100vh - 53px);
+      position: sticky;
+      top: 53px;
+    }
+
+    .sidebar-section {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .section-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    select,
+    input[type="text"] {
+      width: 100%;
+      background: var(--bg-input);
+      color: var(--text);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      padding: 7px 10px;
+      font-size: 12.5px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    select:focus,
+    input[type="text"]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+    }
+
+    .app-meta-hint {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.4;
+      padding: 4px 2px 0;
+    }
+
+    /* Quick Query Chips */
+    .chip-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
+    .chip {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      padding: 4px 9px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      line-height: 1.3;
+    }
+
+    .chip:hover {
+      border-color: var(--accent);
+      color: #fff;
+      background: rgba(56, 189, 248, 0.1);
+    }
+
+    .chip.highlight {
+      border-color: rgba(16, 185, 129, 0.35);
+      color: #6ee7b7;
+      background: rgba(16, 185, 129, 0.08);
+    }
+
+    .chip.highlight:hover {
+      border-color: #10b981;
+      background: rgba(16, 185, 129, 0.16);
+    }
+
+    /* Collapsible Advanced Settings */
+    details.adv-settings {
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+      margin-top: 2px;
+    }
+
+    details.adv-settings summary {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 0;
+      list-style: none;
+    }
+
+    details.adv-settings summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.adv-settings summary::after {
+      content: "▾";
+      font-size: 12px;
+      color: var(--muted);
+      transition: transform 0.15s ease;
+    }
+
+    details.adv-settings[open] summary::after {
+      transform: rotate(180deg);
+    }
+
+    .adv-body {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .toggle-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .toggle-row span {
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .toggle-row input[type="checkbox"] {
+      width: 15px;
+      height: 15px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      margin: 0;
+    }
+
+    /* ==================== MAIN CONTENT AREA ==================== */
+    .main {
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      max-width: 1600px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    /* Search Bar */
+    .search-container {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .search-bar {
+      display: flex;
+      gap: 10px;
+      background: var(--bg-surface);
+      padding: 6px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-strong);
+      box-shadow: var(--shadow-sm);
+      transition: border-color 0.15s ease;
+    }
+
+    .search-bar:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12);
+    }
+
+    .search-bar input {
+      flex: 1;
+      font-size: 14.5px;
+      padding: 8px 12px;
+      border: none;
+      background: transparent;
+      color: #fff;
+      font-weight: 500;
+    }
+
+    .search-bar input:focus {
+      box-shadow: none;
+    }
+
+    .btn-primary {
+      background: var(--brand);
+      color: #fff;
+      border: none;
+      border-radius: 7px;
+      padding: 0 18px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s ease, transform 0.05s ease;
+    }
+
+    .btn-primary:hover {
+      background: #be123c;
+    }
+
+    .btn-primary:active {
+      transform: translateY(1px);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      padding: 4px 9px;
+      font-size: 11.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-secondary:hover {
+      color: #fff;
+      border-color: var(--accent);
+      background: rgba(56, 189, 248, 0.08);
+    }
+
+    .status-strip {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 4px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* ==================== SUMMARY BANNER ==================== */
+    .sbs-summary-strip {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    @media (max-width: 900px) {
+      .sbs-summary-strip {
+        grid-template-columns: 1fr;
+        text-align: left !important;
+      }
+    }
+
+    .summary-side-label {
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 2px;
+    }
+
+    .summary-side-metric {
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .summary-side-top1 {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 420px;
+    }
+
+    .verdict-banner-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 12px;
+    }
+
+    .verdict-banner-pill.win {
+      background: var(--pass-soft);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: #6ee7b7;
+    }
+
+    .verdict-banner-pill.info {
+      background: var(--accent-soft);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: #7dd3fc;
+    }
+
+    .verdict-banner-pill.warn {
+      background: var(--warn-soft);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      color: #fcd34d;
+    }
+
+    /* ==================== SIDE-BY-SIDE COLUMNS ==================== */
+    .sbs-columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    @media (max-width: 1180px) {
+      .sbs-columns {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .sbs-col {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .sbs-col.nlqu-col {
+      border-top: 2px solid var(--accent);
+    }
+
+    .sbs-col.gemini-col {
+      border-top: 2px solid var(--pass);
+    }
+
+    .sbs-col-header {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sbs-col-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      font-weight: 700;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .kv-rows {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 12px;
+    }
+
+    .kv-row {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .kv-label {
+      color: var(--muted);
+      font-size: 11.5px;
+      font-weight: 500;
+    }
+
+    .kv-val {
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      word-break: break-word;
+    }
+
+    .boost-pill-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 2px;
+    }
+
+    .boost-pill {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.28);
+      color: #a7f3d0;
+      padding: 2px 8px;
+      border-radius: 5px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+
+    .boost-pill.pos {
+      background: rgba(16, 185, 129, 0.1);
+      border-color: rgba(16, 185, 129, 0.28);
+      color: #a7f3d0;
+    }
+
+    .boost-pill.neg {
+      background: var(--fail-soft);
+      border-color: rgba(244, 63, 94, 0.3);
+      color: #fda4af;
+    }
+
+    /* ==================== SINGLE ENGINE INSPECTOR BANNER ==================== */
+    .nlu-banner {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      display: grid;
+      grid-template-columns: 1.5fr 1fr 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .nlu-metric {
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .nlu-metric strong {
+      display: block;
+      font-size: 13px;
+      color: var(--text);
+      margin-top: 4px;
+      font-family: var(--font-mono);
+      text-transform: none;
+      letter-spacing: normal;
+      word-break: break-word;
+    }
+
+    /* ==================== RESULT HIT CARDS ==================== */
+    .hit-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--border-strong);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .hit-card:hover {
+      background: var(--bg-card-hover);
+    }
+
+    .hit-card.pass {
+      border-left-color: var(--pass);
+    }
+
+    .hit-card.fail {
+      border-left-color: var(--fail);
+    }
+
+    .hit-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .hit-title-group {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .rank-badge {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-secondary);
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 5px;
+      font-size: 11.5px;
+      font-family: var(--font-mono);
+    }
+
+    .type-badge {
+      padding: 2px 7px;
+      border-radius: 5px;
+      font-size: 10.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .type-badge.movie {
+      background: rgba(59, 130, 246, 0.15);
+      color: #93c5fd;
+    }
+
+    .type-badge.event {
+      background: rgba(168, 85, 247, 0.15);
+      color: #d8b4fe;
+    }
+
+    .type-badge.venue {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fcd34d;
+    }
+
+    .hit-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #f8fafc;
+    }
+
+    .delta-badge {
+      font-size: 10.5px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+
+    .delta-badge.up {
+      background: var(--pass-soft);
+      color: #6ee7b7;
+    }
+
+    .delta-badge.new {
+      background: var(--accent-soft);
+      color: #7dd3fc;
+    }
+
+    .delta-badge.down {
+      background: var(--fail-soft);
+      color: #fda4af;
+    }
+
+    .delta-badge.same {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--muted);
+    }
+
+    .hit-actions {
+      display: flex;
+      gap: 5px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .verdict-pill {
+      padding: 2px 8px;
+      border-radius: 5px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .verdict-pill.pass {
+      background: var(--pass-soft);
+      color: #34d399;
+    }
+
+    .verdict-pill.fail {
+      background: var(--fail-soft);
+      color: #fb7185;
+    }
+
+    .meta-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
+    .meta-pill {
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 2px 8px;
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .meta-pill.session {
+      border-color: rgba(56, 189, 248, 0.25);
+      color: #7dd3fc;
+      background: rgba(56, 189, 248, 0.06);
+    }
+
+    .meta-pill.price {
+      border-color: rgba(16, 185, 129, 0.25);
+      color: #6ee7b7;
+      background: rgba(16, 185, 129, 0.06);
+    }
+
+    .meta-pill.warn {
+      border-color: rgba(245, 158, 11, 0.35);
+      color: #fcd34d;
+    }
+
+    .hit-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding-top: 4px;
+      border-top: 1px solid rgba(255, 255, 255, 0.04);
+      font-size: 11.5px;
+      color: var(--muted);
+    }
+
+    .hit-check-text {
+      color: var(--text-secondary);
+      font-size: 11.5px;
+    }
+
+    .id-code {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .explain-btn {
+      background: transparent;
+      color: #c084fc;
+      border: 1px solid rgba(168, 85, 247, 0.3);
+      border-radius: 5px;
+      padding: 2px 7px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .explain-btn:hover {
+      background: var(--purple-soft);
+      border-color: #a855f7;
+    }
+
+    .explain-box {
+      margin-top: 4px;
+      background: rgba(168, 85, 247, 0.07);
+      border: 1px solid rgba(168, 85, 247, 0.25);
+      border-radius: var(--radius-sm);
+      padding: 9px 12px;
+      font-size: 12px;
+      display: none;
+    }
+
+    .code-drawer {
+      background: #060911;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      display: none;
+      overflow-x: auto;
+    }
+
+    .code-drawer pre {
+      margin: 6px 0 0;
+      font-size: 11px;
+      line-height: 1.45;
+      color: #cbd5e1;
+      font-family: var(--font-mono);
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <!-- TOP HEADER WITH INTEGRATED TABS -->
+  <header>
+    <div class="brand-group">
+      <div class="brand-logo">E</div>
+      <span class="brand-title" id="brandTitleSpan">Entertainment Search Studio</span>
+      <div class="env-pills">
+        <span class="env-pill v3" id="headerAppPill">v3 Master (390.9k docs)</span>
+        <span class="env-pill local" id="headerModelPill">Local gemma-3-1b-it-qat-4bit</span>
+      </div>
+    </div>
+
+    <div class="header-Right">
+      <div class="tab-bar">
+        <button class="tab-btn active" id="tabBtnSbs" onclick="switchTab('sbs')">
+          <span id="sbsTabTitleText">Side-by-Side</span>
+          <span class="tab-badge" id="sbsAppBadge">v3</span>
+        </button>
+        <button class="tab-btn" id="tabBtnSingle" onclick="switchTab('single')">
+          Single Inspector
+        </button>
+        <button class="tab-btn" id="tabBtnCompareApps" onclick="switchTab('compare_apps')">
+          v2 vs v3 App
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- CLEAN SIDEBAR -->
+    <aside class="sidebar">
+      <!-- 1. Target Search App -->
+      <div class="sidebar-section">
+        <div class="section-label">Search Application</div>
+        <select id="searchAppSelect" onchange="onAppChange()">
+          <option value="v3" selected>v3 Master (Session-Grain • 390.9k)</option>
+          <option value="v2">v2 Legacy (Venue-Grain • 262.1k)</option>
+        </select>
+        <div class="app-meta-hint" id="appMetaHint">
+          BQ: <code>ent_5stores_master_v3</code> • 14 indexable • 11 searchable
+        </div>
+      </div>
+
+      <!-- 2. Boost Extraction Model -->
+      <div class="sidebar-section">
+        <div class="section-label">Boost Extraction Model</div>
+        <select id="geminiModelSelect" onchange="onModelChange()">
+          <optgroup label="Local Metal GPU (Apple M4 Pro)">
+            <option value="local:gemma-3-1b-it-qat-4bit" selected>gemma-3-1b-it-qat-4bit (~97 ms • 97.0%)</option>
+            <option value="local:gemma-3-270m-it-qat-4bit">gemma-3-270m-it-qat-4bit (~55 ms)</option>
+            <option value="local:Qwen2.5-3B-Instruct-4bit">Qwen2.5-3B-Instruct-4bit (~180 ms • 96.3%)</option>
+            <option value="local:Qwen2.5-1.5B-Instruct-4bit">Qwen2.5-1.5B-Instruct-4bit (~115 ms)</option>
+          </optgroup>
+          <optgroup label="Vertex AI Cloud (Gemini)">
+            <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (asia-south1)</option>
+            <option value="gemini-4-argon">gemini-4-argon (global preview)</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <!-- Contextual NLU Mode Selector (shown on Single Inspector & v2 vs v3 tabs) -->
+      <div class="sidebar-section" id="singleEngineModeGroup" style="display:none;">
+        <div class="section-label" id="nluModeLabel">Inspector Mode</div>
+        <select id="nluModeSelect" onchange="triggerActiveTabSearch()">
+          <option value="auto_route">🧭 Auto-Route (Gemma 3 Decision API)</option>
+          <option value="llm_boost" selected>Selected Boost LLM</option>
+          <option value="vertex_native">Managed Vertex NLQU</option>
+          <option value="none">Direct Agent Search (No LLM Intent)</option>
+        </select>
+      </div>
+
+      <!-- 2b. User Lat / Long Proximity Boost -->
+      <div class="sidebar-section" style="background:rgba(56,189,248,0.04); border:1px solid rgba(56,189,248,0.18); border-radius:8px; padding:10px;">
+        <div class="section-label" style="color:#7dd3fc;">
+          <span>📍 Lat / Long Proximity Boost</span>
+          <span id="geoActiveBadge" style="font-size:10px; color:var(--muted); text-transform:none; font-weight:600;">Off</span>
+        </div>
+        <select id="geoHubSelect" onchange="onGeoHubChange()">
+          <option value="">None (Region-only boost)</option>
+          <optgroup label="Bengaluru">
+            <option value="12.9966,77.6969">Whitefield / Phoenix (12.9966, 77.6969)</option>
+            <option value="12.9352,77.6245">Koramangala (12.9352, 77.6245)</option>
+            <option value="12.9784,77.6408">Indiranagar / MG Rd (12.9784, 77.6408)</option>
+          </optgroup>
+          <optgroup label="Mumbai">
+            <option value="19.0596,72.8295">Bandra / Juhu (19.0596, 72.8295)</option>
+            <option value="18.9953,72.8255">Lower Parel / Worli (18.9953, 72.8255)</option>
+            <option value="19.1364,72.8296">Andheri West (19.1364, 72.8296)</option>
+          </optgroup>
+          <optgroup label="Delhi NCR">
+            <option value="28.6315,77.2167">Connaught Place (28.6315, 77.2167)</option>
+            <option value="28.4950,77.0895">CyberHub Gurugram (28.4950, 77.0895)</option>
+            <option value="28.5708,77.3260">Noida Sector 18 (28.5708, 77.3260)</option>
+          </optgroup>
+          <optgroup label="Hyderabad &amp; Chennai">
+            <option value="17.4156,78.4347">Hyderabad — Banjara Hills (17.4156, 78.4347)</option>
+            <option value="13.0418,80.2341">Chennai — T. Nagar (13.0418, 80.2341)</option>
+          </optgroup>
+        </select>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+          <input
+            type="text"
+            id="userLatInput"
+            placeholder="Lat (e.g. 12.9966)"
+            oninput="onManualLatLngEdit()"
+            onkeydown="if(event.key==='Enter') triggerActiveTabSearch()"
+          />
+          <input
+            type="text"
+            id="userLngInput"
+            placeholder="Lng (e.g. 77.6969)"
+            oninput="onManualLatLngEdit()"
+            onkeydown="if(event.key==='Enter') triggerActiveTabSearch()"
+          />
+        </div>
+        <div style="display:grid; grid-template-columns:1fr auto auto; gap:5px; align-items:center;">
+          <select id="userRadiusSelect" onchange="triggerActiveTabSearch()" style="font-size:11.5px; padding:5px 7px;">
+            <option value="0" selected>Soft Rings (3 / 10 / 25 km)</option>
+            <option value="10">Filter ≤ 10 km + Rings</option>
+            <option value="25">Filter ≤ 25 km + Rings</option>
+            <option value="50">Filter ≤ 50 km + Rings</option>
+          </select>
+          <button class="btn-secondary" type="button" onclick="useBrowserGps()" title="Use Browser GPS">GPS</button>
+          <button class="btn-secondary" type="button" onclick="clearGeoCoords()" title="Clear Coordinates">✕</button>
+        </div>
+      </div>
+
+      <!-- 3. 135 Benchmark Presets -->
+      <div class="sidebar-section">
+        <div class="section-label">Benchmark Presets (135)</div>
+        <select id="categorySelect" onchange="populatePresetQueries()">
+          <option value="ALL">All Categories (135)</option>
+        </select>
+        <select id="presetSelect" onchange="onSelectPreset()">
+          <option value="">Choose a benchmark query...</option>
+        </select>
+      </div>
+
+      <!-- 4. Quick Test Queries -->
+      <div class="sidebar-section">
+        <div class="section-label">Quick Test Queries</div>
+        <div class="chip-list">
+          <span class="chip highlight" onclick="setQueryAndRun('concerts between 1000 and 3000 in delhi')">concerts 1000–3000 delhi</span>
+          <span class="chip highlight" onclick="setQueryAndRun('cinemas near phoenix marketcity whitefield')">cinemas phoenix whitefield</span>
+          <span class="chip" onclick="setQueryAndRun('IMAX 3D movies in Mumbai')">IMAX 3D Mumbai</span>
+          <span class="chip" onclick="setQueryAndRun('4DX movies in Mumbai')">4DX Mumbai</span>
+          <span class="chip" onclick="setQueryAndRun('late night movie shows in Mumbai')">late night shows Mumbai</span>
+          <span class="chip" onclick="setQueryAndRun('morning movie shows in Bangalore')">morning shows BLR</span>
+          <span class="chip" onclick="setQueryAndRun('shows at Prithvi Theatre Mumbai')">Prithvi Theatre</span>
+          <span class="chip" onclick="setQueryAndRun('events under 500 in Mumbai')">events &lt; ₹500 Mumbai</span>
+          <span class="chip" onclick="setQueryAndRun('free events in Bengaluru')">free events BLR</span>
+          <span class="chip" onclick="setQueryAndRun('Zakir Khan show')">Zakir Khan</span>
+          <span class="chip" onclick="setQueryAndRun('Taylor Swift party in Mumbai')">Taylor Swift Mumbai</span>
+          <span class="chip" onclick="setQueryAndRun('standup comedy in koramangala')">comedy Koramangala</span>
+        </div>
+      </div>
+
+      <!-- 5. Collapsible Advanced Parameters -->
+      <details class="adv-settings">
+        <summary>Advanced Search Parameters</summary>
+        <div class="adv-body">
+          <div class="sidebar-section">
+            <div class="section-label">Filter / Boost Mode</div>
+            <select id="behaviorSelect" onchange="triggerActiveTabSearch()">
+              <option value="SOFT_BOOST" selected>Soft Boost (+0.85 conditionBoostSpecs)</option>
+              <option value="HARD_FILTER">Strict Hard Filter</option>
+            </select>
+          </div>
+
+          <div class="toggle-list">
+            <label class="toggle-row">
+              <span>Collapse Duplicate <code>entity_code</code></span>
+              <input type="checkbox" id="collapseToggle" checked onchange="triggerActiveTabSearch()" />
+            </label>
+            <label class="toggle-row" id="geoRow">
+              <span>GEO Radius Filter (25 km)</span>
+              <input type="checkbox" id="geoToggle" checked onchange="triggerActiveTabSearch()" />
+            </label>
+            <label class="toggle-row">
+              <span>In-Memory LLM Cache</span>
+              <input type="checkbox" id="llmCacheToggle" onchange="triggerActiveTabSearch()" />
+            </label>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="section-label">Results Per Page</div>
+            <select id="pageSizeSelect" onchange="triggerActiveTabSearch()">
+              <option value="10" selected>Top 10 Hits</option>
+              <option value="15">Top 15 Hits</option>
+              <option value="25">Top 25 Hits</option>
+            </select>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="section-label">Manual Discovery Filter</div>
+            <input
+              type="text"
+              id="customFilterInput"
+              placeholder='e.g. record_type: ANY("movie")'
+               onkeydown="if(event.key==='Enter') triggerActiveTabSearch()"
+            />
+          </div>
+        </div>
+      </details>
+    </aside>
+
+    <!-- MAIN WORKSPACE -->
+    <main class="main">
+      <!-- SEARCH BAR -->
+      <div class="search-container">
+        <div class="search-bar">
+          <input
+            type="text"
+            id="queryInput"
+            value="concerts between 1000 and 3000 in delhi"
+            placeholder="Search movies, concerts, venues, formats, price ranges..."
+            onkeydown="if(event.key==='Enter') triggerActiveTabSearch()"
+          />
+          <button class="btn-primary" id="searchBtn" onclick="triggerActiveTabSearch()">Run Side-by-Side</button>
+        </div>
+
+        <div class="status-strip">
+          <span id="statusText">Ready</span>
+          <div id="singleDrawersBtns" style="display:none; gap:6px;">
+            <button class="btn-secondary" onclick="toggleDrawer('curlDrawer')">cURL</button>
+            <button class="btn-secondary" onclick="toggleDrawer('jsonDrawer')">Payload JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 1: Side-by-Side Managed NLQU vs Selected Boost LLM -->
+      <div id="sbsTabPane">
+        <div id="sbsSummaryContainer"></div>
+        <div class="sbs-columns" id="sbsColumnsContainer"></div>
+      </div>
+
+      <!-- TAB 2: Single-Engine Inspector -->
+      <div id="singleTabPane" style="display:none;">
+        <div class="nlu-banner" id="nluBanner">
+          <div class="nlu-metric">
+            Extracted Filters / Boosts
+            <strong id="nluFilterVal" style="color:#34d399;">—</strong>
+            <div id="nluEngineBadge" style="font-size:11px; color:var(--accent); margin-top:3px; text-transform:none;"></div>
+          </div>
+          <div class="nlu-metric">
+            Rewritten Query
+            <strong id="nluRewriteVal" style="color:#fde047;">—</strong>
+          </div>
+          <div class="nlu-metric">
+            Total Latency
+            <strong id="nluLatencyVal">—</strong>
+            <div id="nluBreakdownVal" style="font-size:11px; color:var(--muted); margin-top:3px; text-transform:none;"></div>
+          </div>
+          <div class="nlu-metric">
+            Match Verdicts
+            <strong id="nluStatsVal">—</strong>
+          </div>
+        </div>
+
+        <div class="code-drawer" id="curlDrawer" style="margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong style="font-size:11.5px; color:var(--accent);">Live cURL Command</strong>
+            <button class="btn-secondary" onclick="copyText('curlCode')">Copy</button>
+          </div>
+          <pre id="curlCode"></pre>
+        </div>
+
+        <div class="code-drawer" id="jsonDrawer" style="margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong style="font-size:11.5px; color:var(--accent);">Request Payload &amp; NLU Extraction</strong>
+          </div>
+          <pre id="jsonCode"></pre>
+        </div>
+
+        <div id="resultsContainer" style="display:flex; flex-direction:column; gap:10px;"></div>
+      </div>
+
+      <!-- TAB 3: Head-to-Head Compare v2 vs v3 App -->
+      <div id="compareAppsTabPane" style="display:none;">
+        <div id="cmpAppsSummaryContainer"></div>
+        <div class="sbs-columns" id="cmpAppsColumnsContainer"></div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    let ACTIVE_TAB = 'sbs';
+    let ALL_PRESETS = [];
+    let LAST_SINGLE_RESPONSE = null;
+    let LAST_SBS_RESPONSE = null;
+    let LAST_CMP_APPS_RESPONSE = null;
+
+    const APP_UI_META = {
+      v3: {
+        pill: 'v3 Master • 390.9k docs',
+        badge: 'v3',
+        hintHtml: 'BQ: <code style="color:#7dd3fc;">ent_5stores_master_v3</code> • 14 indexable • 11 searchable',
+      },
+      v2: {
+        pill: 'v2 Legacy • 262.1k docs',
+        badge: 'v2',
+        hintHtml: 'BQ: <code style="color:#fcd34d;">ent_5stores_unified</code> • Nested <code>sessions[]</code>',
+      },
+    };
+
+    function getSelectedApp() {
+      return document.getElementById('searchAppSelect').value || 'v3';
+    }
+
+    function getSelectedModel() {
+      return document.getElementById('geminiModelSelect').value || 'local:gemma-3-1b-it-qat-4bit';
+    }
+
+    function formatShortModelLabel(m) {
+      if (m.startsWith('local:')) {
+        return m.replace('local:', '');
+      }
+      return m;
+    }
+
+    function updateAppLabels() {
+      const appKey = getSelectedApp();
+      const meta = APP_UI_META[appKey] || APP_UI_META.v3;
+      document.getElementById('headerAppPill').textContent = meta.pill;
+      document.getElementById('sbsAppBadge').textContent = meta.badge;
+      document.getElementById('appMetaHint').innerHTML = meta.hintHtml;
+    }
+
+    function updateModelLabels() {
+      const m = getSelectedModel();
+      const shortLbl = formatShortModelLabel(m);
+      const isLocal = m.startsWith('local:');
+      document.getElementById('brandTitleSpan').textContent = 'Entertainment Search Studio';
+      const pill = document.getElementById('headerModelPill');
+      pill.textContent = isLocal ? `Local • ${shortLbl}` : `Cloud • ${shortLbl}`;
+      pill.className = isLocal ? 'env-pill local' : 'env-pill purple';
+      document.getElementById('sbsTabTitleText').textContent = 'Side-by-Side';
+    }
+
+    function onAppChange() {
+      updateAppLabels();
+      triggerActiveTabSearch();
+    }
+
+    function onModelChange() {
+      updateModelLabels();
+      triggerActiveTabSearch();
+    }
+
+    function updateGeoBadge() {
+      const lat = document.getElementById('userLatInput').value.trim();
+      const lng = document.getElementById('userLngInput').value.trim();
+      const badge = document.getElementById('geoActiveBadge');
+      if (lat && lng) {
+        badge.textContent = `Active (${Number(lat).toFixed(3)}, ${Number(lng).toFixed(3)})`;
+        badge.style.color = '#34d399';
+      } else {
+        badge.textContent = 'Off';
+        badge.style.color = 'var(--muted)';
+      }
+    }
+
+    function onGeoHubChange() {
+      const val = document.getElementById('geoHubSelect').value;
+      if (!val) {
+        document.getElementById('userLatInput').value = '';
+        document.getElementById('userLngInput').value = '';
+      } else {
+        const parts = val.split(',');
+        document.getElementById('userLatInput').value = parts[0] || '';
+        document.getElementById('userLngInput').value = parts[1] || '';
+      }
+      updateGeoBadge();
+      triggerActiveTabSearch();
+    }
+
+    function onManualLatLngEdit() {
+      document.getElementById('geoHubSelect').value = '';
+      updateGeoBadge();
+    }
+
+    function clearGeoCoords() {
+      document.getElementById('geoHubSelect').value = '';
+      document.getElementById('userLatInput').value = '';
+      document.getElementById('userLngInput').value = '';
+      updateGeoBadge();
+      triggerActiveTabSearch();
+    }
+
+    function useBrowserGps() {
+      if (!navigator.geolocation) {
+        alert('Browser Geolocation is not available.');
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          document.getElementById('geoHubSelect').value = '';
+          document.getElementById('userLatInput').value = pos.coords.latitude.toFixed(6);
+          document.getElementById('userLngInput').value = pos.coords.longitude.toFixed(6);
+          updateGeoBadge();
+          triggerActiveTabSearch();
+        },
+        err => {
+          alert('Could not fetch GPS coordinates: ' + err.message);
+        },
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    }
+
+    function switchTab(tab) {
+      ACTIVE_TAB = tab;
+      document.getElementById('tabBtnSbs').classList.toggle('active', tab === 'sbs');
+      document.getElementById('tabBtnSingle').classList.toggle('active', tab === 'single');
+      document.getElementById('tabBtnCompareApps').classList.toggle('active', tab === 'compare_apps');
+      document.getElementById('sbsTabPane').style.display = tab === 'sbs' ? 'block' : 'none';
+      document.getElementById('singleTabPane').style.display = tab === 'single' ? 'block' : 'none';
+      document.getElementById('compareAppsTabPane').style.display = tab === 'compare_apps' ? 'block' : 'none';
+
+      const showModeSelect = (tab === 'single' || tab === 'compare_apps');
+      document.getElementById('singleEngineModeGroup').style.display = showModeSelect ? 'flex' : 'none';
+      document.getElementById('nluModeLabel').textContent = tab === 'compare_apps'
+        ? 'NLU Engine (v2 vs v3)'
+        : 'Inspector Mode';
+      document.getElementById('singleDrawersBtns').style.display = tab === 'single' ? 'flex' : 'none';
+
+      if (tab === 'sbs') {
+        document.getElementById('searchBtn').textContent = 'Run Side-by-Side';
+      } else if (tab === 'compare_apps') {
+        document.getElementById('searchBtn').textContent = 'Compare v2 vs v3';
+      } else {
+        document.getElementById('searchBtn').textContent = 'Search Live';
+      }
+      triggerActiveTabSearch();
+    }
+
+    function triggerActiveTabSearch() {
+      if (ACTIVE_TAB === 'sbs') {
+        runSideBySide();
+      } else if (ACTIVE_TAB === 'compare_apps') {
+        runCompareApps();
+      } else {
+        runSearch();
+      }
+    }
+
+    async function loadPresets() {
+      const res = await fetch('/api/presets');
+      const data = await res.json();
+      ALL_PRESETS = data.queries || [];
+      const cats = [...new Set(ALL_PRESETS.map(q => q.category))];
+      const catSel = document.getElementById('categorySelect');
+      cats.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c;
+        catSel.appendChild(opt);
+      });
+      populatePresetQueries();
+    }
+
+    function populatePresetQueries() {
+      const cat = document.getElementById('categorySelect').value;
+      const presetSel = document.getElementById('presetSelect');
+      presetSel.innerHTML = '<option value="">Choose a benchmark query...</option>';
+      const filtered = cat === 'ALL' ? ALL_PRESETS : ALL_PRESETS.filter(q => q.category === cat);
+      filtered.forEach(q => {
+        const opt = document.createElement('option');
+        opt.value = q.query;
+        opt.textContent = `[${q.id}] ${q.query}`;
+        presetSel.appendChild(opt);
+      });
+    }
+
+    function onSelectPreset() {
+      const val = document.getElementById('presetSelect').value;
+      if (val) {
+        document.getElementById('queryInput').value = val;
+        triggerActiveTabSearch();
+      }
+    }
+
+    function setQueryAndRun(q) {
+      document.getElementById('queryInput').value = q;
+      triggerActiveTabSearch();
+    }
+
+    function toggleDrawer(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.style.display = el.style.display === 'block' ? 'none' : 'block';
+    }
+
+    function copyText(id) {
+      const el = document.getElementById(id);
+      if (el) navigator.clipboard.writeText(el.textContent);
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function buildRequestParams() {
+      const latRaw = document.getElementById('userLatInput').value.trim();
+      const lngRaw = document.getElementById('userLngInput').value.trim();
+      const radRaw = document.getElementById('userRadiusSelect').value;
+      return {
+        search_app: getSelectedApp(),
+        query: document.getElementById('queryInput').value.trim(),
+        nlu_mode: document.getElementById('nluModeSelect').value,
+        gemini_model: getSelectedModel(),
+        use_llm_cache: document.getElementById('llmCacheToggle').checked,
+        filter_behavior: document.getElementById('behaviorSelect').value,
+        geo_enabled: document.getElementById('geoToggle').checked,
+        allowed_fields_enabled: true,
+        collapse_enabled: document.getElementById('collapseToggle').checked,
+        custom_filter: document.getElementById('customFilterInput').value.trim(),
+        page_size: parseInt(document.getElementById('pageSizeSelect').value, 10) || 10,
+        user_lat: latRaw !== '' ? parseFloat(latRaw) : null,
+        user_lng: lngRaw !== '' ? parseFloat(lngRaw) : null,
+        user_radius_km: parseFloat(radRaw) || 0,
+      };
+    }
+
+    /* Clean Result Card Renderer — suppresses empty ('—') pills */
+    function renderHitCardHtml(h, idx, prefix) {
+      const passCls = h.pass ? 'pass' : 'fail';
+      const verdictLbl = h.pass ? 'MATCH' : 'MISS';
+      const rt = (h.record_type || 'unknown').toLowerCase();
+
+      const regionPart = (h.regions && h.regions.length) ? h.regions.join(', ') : (h.address ? h.address.slice(0, 40) : '');
+      const venuePart = (h.venues && h.venues.length) ? h.venues[0] : '';
+      const locStr = [regionPart, venuePart].filter(Boolean).join(' • ');
+
+      const isV3 = h.search_app === 'v3' || Boolean(h.session_id);
+      const topFmts = (h.top_level_formats && h.top_level_formats.length) ? h.top_level_formats.join(', ') : '';
+      const sessFmts = (h.session_formats && h.session_formats.length) ? h.session_formats.join(', ') : '';
+
+      const priceStr = (h.min_price !== null && h.min_price !== undefined)
+        ? (h.max_price && h.max_price > h.min_price ? `₹${Math.round(h.min_price)}–₹${Math.round(h.max_price)}` : `₹${Math.round(h.min_price)}`)
+        : '';
+
+      const deltaHtml = h.rank_delta_label
+        ? `<span class="delta-badge ${escapeHtml(h.rank_delta_type || 'same')}">${escapeHtml(h.rank_delta_label)}</span>`
+        : '';
+
+      const pills = [];
+      if (h.distance_km !== null && h.distance_km !== undefined) {
+        const nearCls = h.distance_km <= 5 ? 'price' : (h.distance_km <= 20 ? 'session' : '');
+        pills.push(`<span class="meta-pill ${nearCls}">🧭 ${h.distance_km} km away</span>`);
+      }
+      if (locStr) {
+        pills.push(`<span class="meta-pill">📍 ${escapeHtml(locStr)}</span>`);
+      }
+      if (priceStr) {
+        pills.push(`<span class="meta-pill price">${escapeHtml(priceStr)}</span>`);
+      }
+      if (h.languages && h.languages.length) {
+        pills.push(`<span class="meta-pill">${escapeHtml(h.languages.join(', '))}</span>`);
+      }
+      if (h.genres && h.genres.length) {
+        pills.push(`<span class="meta-pill">${escapeHtml(h.genres.slice(0, 3).join(', '))}</span>`);
+      }
+      if (isV3) {
+        if (topFmts) {
+          pills.push(`<span class="meta-pill">📽️ ${escapeHtml(topFmts)}</span>`);
+        }
+        if (h.session_id) {
+          const slotTxt = (h.time_slots && h.time_slots.length) ? `${h.time_slots.join('/')}` : `sess #${h.session_id}`;
+          pills.push(`<span class="meta-pill session">🎟️ ${escapeHtml(slotTxt)}</span>`);
+        }
+      } else {
+        const v2FmtLabel = topFmts || (sessFmts ? `sess: ${sessFmts}` : '');
+        if (v2FmtLabel) {
+          pills.push(`<span class="meta-pill ${!topFmts && rt === 'movie' ? 'warn' : ''}">📽️ ${escapeHtml(v2FmtLabel)}</span>`);
+        }
+      }
+      if (h.date_display && h.date_display !== '—') {
+        pills.push(`<span class="meta-pill">🗓️ ${escapeHtml(h.date_display)}</span>`);
+      }
+
+      const idLabel = h.entity_code && h.entity_code !== h.id
+        ? `${h.id} • ${h.entity_code}`
+        : `${h.id || ''}`;
+
+      return `
+        <div class="hit-card ${passCls}">
+          <div class="hit-header">
+            <div class="hit-title-group">
+              <span class="rank-badge">#${h.rank}</span>
+              <span class="type-badge ${escapeHtml(rt)}">${escapeHtml(rt)}</span>
+              <span class="hit-title">${escapeHtml(h.title)}</span>
+              ${deltaHtml}
+            </div>
+            <div class="hit-actions">
+              <span class="verdict-pill ${passCls}">${verdictLbl}</span>
+              <button class="explain-btn" onclick="explainHit('${prefix}', ${idx}, this)">Explain</button>
+              <button class="btn-secondary" onclick="toggleDrawer('raw-${prefix}-${idx}')" title="View Raw Document JSON">{ }</button>
+            </div>
+          </div>
+
+          ${pills.length ? `<div class="meta-grid">${pills.join('')}</div>` : ''}
+
+          <div class="hit-footer">
+            <span class="hit-check-text">${escapeHtml(h.explanation)}</span>
+            <span class="id-code">${escapeHtml(idLabel)}</span>
+          </div>
+
+          <div class="explain-box" id="exp-${prefix}-${idx}"></div>
+          <div class="code-drawer" id="raw-${prefix}-${idx}">
+            <pre>${escapeHtml(JSON.stringify(h.raw_struct_data, null, 2))}</pre>
+          </div>
+        </div>
+      `;
+    }
+
+    /* ==================== TAB 1: SIDE-BY-SIDE MANAGED NLQU vs LOCAL MLX / GEMINI ==================== */
+    async function runSideBySide() {
+      const reqBody = buildRequestParams();
+      if (!reqBody.query) return;
+
+      const modelName = formatShortModelLabel(reqBody.gemini_model);
+      const appTag = reqBody.search_app.toUpperCase();
+      const btn = document.getElementById('searchBtn');
+      const statusText = document.getElementById('statusText');
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+      statusText.textContent = `[${appTag}] Comparing Managed NLQU vs ${modelName} for "${reqBody.query}"...`;
+
+      try {
+        const res = await fetch('/api/side_by_side', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(reqBody),
+        });
+        const data = await res.json();
+        LAST_SBS_RESPONSE = data;
+        renderSideBySide(data);
+      } catch (err) {
+        statusText.textContent = `Error: ${err.message}`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run Side-by-Side';
+      }
+    }
+
+    function renderSideBySide(data) {
+      const statusText = document.getElementById('statusText');
+      const sumEl = document.getElementById('sbsSummaryContainer');
+      const colsEl = document.getElementById('sbsColumnsContainer');
+
+      if (data.status !== 'OK') {
+        statusText.textContent = 'Error running side-by-side comparison';
+        sumEl.innerHTML = `<div class="hit-card fail"><pre>${escapeHtml(data.error || 'Unknown error')}</pre></div>`;
+        colsEl.innerHTML = '';
+        return;
+      }
+
+      const nlqu = data.vertex_nlqu;
+      const gem = data.gemini_boost;
+      const appBadge = escapeHtml((data.search_app || getSelectedApp()).toUpperCase());
+      const engineName = escapeHtml(data.engine_id || '');
+      const modelLabel = escapeHtml(formatShortModelLabel(data.gemini_model || gem.display_model || getSelectedModel()));
+      const isLocal = (gem.gemini_model || '').startsWith('local:');
+      const colColor = isLocal ? '#34d399' : '#c084fc';
+      const nlquH0 = (nlqu.hits && nlqu.hits[0]) ? nlqu.hits[0] : null;
+      const gemH0 = (gem.hits && gem.hits[0]) ? gem.hits[0] : null;
+
+      statusText.textContent = `${appBadge} (${engineName}) • Managed NLQU: ${nlqu.latency_ms} ms vs ${modelLabel}: ${gem.latency_ms} ms (LLM ${gem.nlu_parse_ms} ms + Search ${gem.search_ms} ms)`;
+
+      let verdictBadge = '';
+      if (gem.top1_pass && !nlqu.top1_pass) {
+        verdictBadge = `<span class="verdict-banner-pill win">🏆 ${modelLabel} Fixed Top-1</span>`;
+      } else if (!gem.top1_pass && nlqu.top1_pass) {
+        verdictBadge = `<span class="verdict-banner-pill info">Managed NLQU Won Top-1</span>`;
+      } else if (gem.top1_pass && nlqu.top1_pass) {
+        const sameTop1 = nlquH0 && gemH0 && ((nlquH0.entity_code && nlquH0.entity_code === gemH0.entity_code) || nlquH0.id === gemH0.id);
+        verdictBadge = `<span class="verdict-banner-pill win">✓ Both Pass Top-1 (${sameTop1 ? 'Same #1' : 'Valid Top-1'})</span>`;
+      } else {
+        verdictBadge = `<span class="verdict-banner-pill warn">Compare Ranked Candidates</span>`;
+      }
+
+      const latDeltaTxt = data.latency_diff_ms >= 0
+        ? `${modelLabel} is ${data.latency_diff_ms} ms faster`
+        : `Managed NLQU is ${Math.abs(data.latency_diff_ms)} ms faster`;
+
+      const rd = data.route_decision;
+      let routerBadgeHtml = '';
+      if (rd && rd.status === 'OK') {
+        const isCallLlm = Boolean(rd.call_llm_for_intent);
+        const rIcon = isCallLlm ? '🧭' : '⚡';
+        const rColor = isCallLlm ? '#34d399' : '#7dd3fc';
+        routerBadgeHtml = `
+          <div style="margin-top:5px; font-size:11px; color:${rColor}; font-weight:600;" title="${escapeHtml(rd.reason || '')}">
+            ${rIcon} Gemma 3 Router (${rd.router_latency_ms} ms): <code>${escapeHtml(rd.route)}</code> — <span style="color:var(--text-secondary); font-weight:400;">${escapeHtml(rd.reason || '')}</span>
+          </div>
+        `;
+      }
+
+      sumEl.innerHTML = `
+        <div class="sbs-summary-strip">
+          <div>
+            <div class="summary-side-label">Managed Vertex NLQU (${appBadge})</div>
+            <div class="summary-side-metric" style="color:var(--accent);">
+              <span>${nlqu.latency_ms} ms</span>
+              <span style="font-size:12px; color:var(--text-secondary); font-weight:500;">• ${nlqu.pass_count ?? 0}/${nlqu.hit_count ?? 0} matched</span>
+            </div>
+            <div class="summary-side-top1">
+              #1: ${nlquH0 ? `${escapeHtml(nlquH0.title)}` : '(0 hits)'}
+            </div>
+          </div>
+
+          <div style="text-align:center;">
+            ${verdictBadge}
+            <div style="font-size:11px; color:var(--muted); margin-top:4px;">${escapeHtml(latDeltaTxt)}</div>
+            ${routerBadgeHtml}
+          </div>
+
+          <div style="text-align:right;">
+            <div class="summary-side-label">${isLocal ? 'Local Metal GPU' : 'Vertex Cloud'} • ${modelLabel}</div>
+            <div class="summary-side-metric" style="color:${colColor}; justify-content:flex-end;">
+              <span>${gem.latency_ms} ms</span>
+              <span style="font-size:11.5px; color:var(--muted); font-weight:500;">(LLM ${gem.nlu_parse_ms} ms + Search ${gem.search_ms} ms)</span>
+              <span style="font-size:12px; color:var(--text-secondary); font-weight:500;">• ${gem.pass_count ?? 0}/${gem.hit_count ?? 0} matched</span>
+            </div>
+            <div class="summary-side-top1" style="margin-left:auto;">
+              #1: ${gemH0 ? `${escapeHtml(gemH0.title)}` : '(0 hits)'}
+            </div>
+          </div>
+        </div>
+      `;
+
+      const boostSpecs = gem.boost_specs || [];
+      const boostPillsHtml = boostSpecs.length
+        ? `<div class="boost-pill-list">` + boostSpecs.map(b => {
+            const cls = b.boost >= 0 ? 'pos' : 'neg';
+            const sign = b.boost >= 0 ? `+${b.boost}` : `${b.boost}`;
+            return `<span class="boost-pill ${cls}"><strong>${sign}</strong> ${escapeHtml(b.condition)}</span>`;
+          }).join('') + `</div>`
+        : `<span style="color:var(--muted); font-size:11.5px;">None</span>`;
+
+      const nlquHitsHtml = nlqu.status !== 'OK'
+        ? `<div class="hit-card fail"><pre>${escapeHtml(nlqu.error || 'Error')}</pre></div>`
+        : ((nlqu.hits && nlqu.hits.length)
+            ? nlqu.hits.map((h, i) => renderHitCardHtml(h, i, 'sbs_nlqu')).join('')
+            : `<div class="hit-card fail"><strong>0 results returned by Managed Vertex NLQU.</strong></div>`);
+
+      const gemHitsHtml = gem.status !== 'OK'
+        ? `<div class="hit-card fail"><pre>${escapeHtml(gem.error || 'Error')}</pre></div>`
+        : ((gem.hits && gem.hits.length)
+            ? gem.hits.map((h, i) => renderHitCardHtml(h, i, 'sbs_gem')).join('')
+            : `<div class="hit-card fail"><strong>0 results returned by ${modelLabel}.</strong></div>`);
+
+      colsEl.innerHTML = `
+        <!-- LEFT COLUMN: MANAGED VERTEX NLQU -->
+        <div class="sbs-col nlqu-col">
+          <div class="sbs-col-header">
+            <div class="sbs-col-title">
+              <span style="color:var(--accent);">Managed Vertex NLQU</span>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <span style="font-size:12px; color:var(--text-secondary); font-weight:600;">${nlqu.latency_ms} ms</span>
+                <button class="btn-secondary" onclick="toggleDrawer('sbsNlquCurlDrawer')">cURL</button>
+                <button class="btn-secondary" onclick="toggleDrawer('sbsNlquJsonDrawer')">JSON</button>
+              </div>
+            </div>
+            <div class="kv-rows">
+              <div class="kv-row">
+                <span class="kv-label">Rewritten Query</span>
+                <span class="kv-val" style="color:#fde047;">${escapeHtml(nlqu.rewritten_query || nlqu.query)}</span>
+              </div>
+              <div class="kv-row">
+                <span class="kv-label">Extracted Filter</span>
+                <span class="kv-val" style="color:#34d399;">${escapeHtml(nlqu.extracted_filters || 'None')}</span>
+              </div>
+            </div>
+            <div class="code-drawer" id="sbsNlquCurlDrawer">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <strong style="font-size:11px; color:var(--accent);">Managed NLQU cURL</strong>
+                <button class="btn-secondary" onclick="copyText('sbsNlquCurlPre')">Copy</button>
+              </div>
+              <pre id="sbsNlquCurlPre">${escapeHtml(nlqu.curl_command || '')}</pre>
+            </div>
+            <div class="code-drawer" id="sbsNlquJsonDrawer">
+              <pre>${escapeHtml(JSON.stringify({ engine_id: nlqu.engine_id, request: nlqu.request_payload, nlu_info: nlqu.nlu_info }, null, 2))}</pre>
+            </div>
+          </div>
+
+          ${nlquHitsHtml}
+        </div>
+
+        <!-- RIGHT COLUMN: LOCAL METAL GPU / GEMINI BOOST EXTRACTION -->
+        <div class="sbs-col gemini-col" style="border-top-color:${colColor};">
+          <div class="sbs-col-header">
+            <div class="sbs-col-title">
+              <span style="color:${colColor};">${modelLabel}</span>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <span style="font-size:12px; color:var(--text-secondary); font-weight:600;">${gem.latency_ms} ms <span style="color:var(--muted); font-weight:400;">(${gem.nlu_parse_ms}+${gem.search_ms} ms)</span></span>
+                <button class="btn-secondary" onclick="toggleDrawer('sbsGemCurlDrawer')">cURL</button>
+                <button class="btn-secondary" onclick="toggleDrawer('sbsGemJsonDrawer')">JSON</button>
+              </div>
+            </div>
+            <div class="kv-rows">
+              <div class="kv-row">
+                <span class="kv-label">Rewritten Query</span>
+                <span class="kv-val" style="color:#fde047;">${escapeHtml(gem.rewritten_query || gem.query)}</span>
+              </div>
+              ${gem.geo_filter ? `
+              <div class="kv-row">
+                <span class="kv-label">GEO Filter</span>
+                <span class="kv-val" style="color:#34d399;">${escapeHtml(gem.geo_filter)}</span>
+              </div>` : ''}
+              <div class="kv-row">
+                <span class="kv-label">Boost Specs (${boostSpecs.length})</span>
+                <div>${boostPillsHtml}</div>
+              </div>
+            </div>
+            <div class="code-drawer" id="sbsGemCurlDrawer">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <strong style="font-size:11px; color:${colColor};">${modelLabel} cURL</strong>
+                <button class="btn-secondary" onclick="copyText('sbsGemCurlPre')">Copy</button>
+              </div>
+              <pre id="sbsGemCurlPre">${escapeHtml(gem.curl_command || '')}</pre>
+            </div>
+            <div class="code-drawer" id="sbsGemJsonDrawer">
+              <pre>${escapeHtml(JSON.stringify({ engine_id: gem.engine_id, model: modelLabel, llm_extracted_json: gem.llm_raw, request_payload: gem.request_payload }, null, 2))}</pre>
+            </div>
+          </div>
+
+          ${gemHitsHtml}
+        </div>
+      `;
+    }
+
+    /* ==================== TAB 2: SINGLE-ENGINE INSPECTOR ==================== */
+    async function runSearch() {
+      const reqBody = buildRequestParams();
+      if (!reqBody.query) return;
+
+      const btn = document.getElementById('searchBtn');
+      const statusText = document.getElementById('statusText');
+      btn.disabled = true;
+      btn.textContent = 'Searching...';
+      statusText.textContent = `[${reqBody.search_app.toUpperCase()}] Running ${reqBody.nlu_mode} for "${reqBody.query}"...`;
+
+      try {
+        const res = await fetch('/api/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(reqBody),
+        });
+        const data = await res.json();
+        LAST_SINGLE_RESPONSE = data;
+        renderSearchResponse(data);
+      } catch (err) {
+        statusText.textContent = `Error: ${err.message}`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Search Live';
+      }
+    }
+
+    function renderSearchResponse(data) {
+      const statusText = document.getElementById('statusText');
+      document.getElementById('curlCode').textContent = data.curl_command || '';
+      document.getElementById('jsonCode').textContent = JSON.stringify({
+        engine_id: data.engine_id,
+        request_payload: data.request_payload,
+        nlu_details: data.nlu_info,
+      }, null, 2);
+
+      if (data.status !== 'OK') {
+        statusText.textContent = `API Error (${data.status_code || 500}) on ${data.engine_id || ''}`;
+        document.getElementById('resultsContainer').innerHTML = `<div class="hit-card fail"><pre>${escapeHtml(data.error)}</pre></div>`;
+        return;
+      }
+
+      statusText.textContent = `${(data.search_app || '').toUpperCase()} (${data.engine_id}) • Completed in ${data.latency_ms} ms via ${data.nlu_engine_label}`;
+      document.getElementById('nluFilterVal').textContent = data.extracted_filters || 'None';
+      document.getElementById('nluEngineBadge').textContent = `${data.engine_id} • ${data.nlu_engine_label || ''}`;
+      document.getElementById('nluRewriteVal').textContent = data.rewritten_query || data.query;
+
+      const latEl = document.getElementById('nluLatencyVal');
+      latEl.textContent = `${data.latency_ms} ms (${data.hit_count} hits)`;
+      latEl.style.color = data.latency_ms < 850 ? '#34d399' : '#fbbf24';
+      document.getElementById('nluBreakdownVal').textContent =
+        data.nlu_mode === 'vertex_native'
+          ? 'Managed Vertex NLQU + Search'
+          : `LLM: ${data.nlu_parse_ms} ms + Search: ${data.search_ms} ms`;
+
+      document.getElementById('nluStatsVal').textContent = `${data.pass_count} Match • ${data.fail_count} Miss`;
+
+      const container = document.getElementById('resultsContainer');
+      if (!data.hits || data.hits.length === 0) {
+        container.innerHTML = `<div class="hit-card fail"><strong>0 results returned.</strong></div>`;
+        return;
+      }
+      container.innerHTML = data.hits.map((h, idx) => renderHitCardHtml(h, idx, 'single')).join('');
+    }
+
+    /* ==================== TAB 3: HEAD-TO-HEAD COMPARE v2 vs v3 APP ==================== */
+    async function runCompareApps() {
+      const reqBody = buildRequestParams();
+      if (!reqBody.query) return;
+
+      const btn = document.getElementById('searchBtn');
+      const statusText = document.getElementById('statusText');
+      btn.disabled = true;
+      btn.textContent = 'Comparing...';
+      statusText.textContent = `Comparing v2 vs v3 Master for "${reqBody.query}"...`;
+
+      try {
+        const res = await fetch('/api/compare_apps', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(reqBody),
+        });
+        const data = await res.json();
+        LAST_CMP_APPS_RESPONSE = data;
+        renderCompareApps(data);
+      } catch (err) {
+        statusText.textContent = `Error: ${err.message}`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Compare v2 vs v3';
+      }
+    }
+
+    function renderCompareApps(data) {
+      const statusText = document.getElementById('statusText');
+      const sumEl = document.getElementById('cmpAppsSummaryContainer');
+      const colsEl = document.getElementById('cmpAppsColumnsContainer');
+
+      if (data.status !== 'OK') {
+        statusText.textContent = 'Error comparing v2 vs v3 apps';
+        sumEl.innerHTML = `<div class="hit-card fail"><pre>${escapeHtml(data.error || 'Unknown error')}</pre></div>`;
+        colsEl.innerHTML = '';
+        return;
+      }
+
+      const v2 = data.app_v2;
+      const v3 = data.app_v3;
+      const v2H0 = (v2.hits && v2.hits[0]) ? v2.hits[0] : null;
+      const v3H0 = (v3.hits && v3.hits[0]) ? v3.hits[0] : null;
+
+      statusText.textContent = `v2 Search: ${v2.search_ms} ms (${v2.pass_count ?? 0}/${v2.hit_count ?? 0} match) vs v3 Search: ${v3.search_ms} ms (${v3.pass_count ?? 0}/${v3.hit_count ?? 0} match)`;
+
+      let verdictBadge = '';
+      if (v3.top1_pass && !v2.top1_pass) {
+        verdictBadge = `<span class="verdict-banner-pill win">🚀 v3 Master Fixed Top-1</span>`;
+      } else if (!v3.top1_pass && v2.top1_pass) {
+        verdictBadge = `<span class="verdict-banner-pill warn">v2 Won Top-1</span>`;
+      } else if (v3.top1_pass && v2.top1_pass) {
+        verdictBadge = `<span class="verdict-banner-pill win">✓ Both v2 &amp; v3 Pass Top-1</span>`;
+      } else {
+        verdictBadge = `<span class="verdict-banner-pill warn">Compare v2 vs v3 Candidates</span>`;
+      }
+
+      sumEl.innerHTML = `
+        <div class="sbs-summary-strip">
+          <div>
+            <div class="summary-side-label">v2 Legacy App (262.1k Venue-Grain)</div>
+            <div class="summary-side-metric" style="color:#fcd34d;">
+              <span>${v2.search_ms} ms</span>
+              <span style="font-size:12px; color:var(--text-secondary); font-weight:500;">• ${v2.pass_count ?? 0}/${v2.hit_count ?? 0} matched</span>
+            </div>
+            <div class="summary-side-top1">
+              #1: ${v2H0 ? `${escapeHtml(v2H0.title)}` : '(0 hits)'}
+            </div>
+          </div>
+
+          <div style="text-align:center;">
+            ${verdictBadge}
+            <div style="font-size:11px; color:var(--muted); margin-top:4px;">${escapeHtml(v3.nlu_engine_label || data.nlu_mode)}</div>
+          </div>
+
+          <div style="text-align:right;">
+            <div class="summary-side-label">v3 Master App (390.9k Session-Grain)</div>
+            <div class="summary-side-metric" style="color:#34d399; justify-content:flex-end;">
+              <span>${v3.search_ms} ms</span>
+              <span style="font-size:12px; color:var(--text-secondary); font-weight:500;">• ${v3.pass_count ?? 0}/${v3.hit_count ?? 0} matched</span>
+            </div>
+            <div class="summary-side-top1" style="margin-left:auto;">
+              #1: ${v3H0 ? `${escapeHtml(v3H0.title)}` : '(0 hits)'}
+            </div>
+          </div>
+        </div>
+      `;
+
+      const v2HitsHtml = v2.status !== 'OK'
+        ? `<div class="hit-card fail"><pre>${escapeHtml(v2.error || 'Error')}</pre></div>`
+        : ((v2.hits && v2.hits.length)
+            ? v2.hits.map((h, i) => renderHitCardHtml(h, i, 'cmp_v2')).join('')
+            : `<div class="hit-card fail"><strong>0 results returned by v2 App.</strong></div>`);
+
+      const v3HitsHtml = v3.status !== 'OK'
+        ? `<div class="hit-card fail"><pre>${escapeHtml(v3.error || 'Error')}</pre></div>`
+        : ((v3.hits && v3.hits.length)
+            ? v3.hits.map((h, i) => renderHitCardHtml(h, i, 'cmp_v3')).join('')
+            : `<div class="hit-card fail"><strong>0 results returned by v3 Master App.</strong></div>`);
+
+      colsEl.innerHTML = `
+        <div class="sbs-col" style="border-top:2px solid #f59e0b;">
+          <div class="sbs-col-header">
+            <div class="sbs-col-title">
+              <span style="color:#fcd34d;">v2: ent-bq-5stores-v2-app</span>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <span style="font-size:12px; color:var(--text-secondary);">${v2.search_ms} ms</span>
+                <button class="btn-secondary" onclick="toggleDrawer('cmpV2CurlDrawer')">cURL</button>
+                <button class="btn-secondary" onclick="toggleDrawer('cmpV2JsonDrawer')">JSON</button>
+              </div>
+            </div>
+            <div class="kv-rows">
+              <div class="kv-row">
+                <span class="kv-label">Compiled Specs</span>
+                <span class="kv-val" style="color:#fcd34d;">${escapeHtml(v2.extracted_filters || 'None')}</span>
+              </div>
+            </div>
+            <div class="code-drawer" id="cmpV2CurlDrawer">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <strong style="font-size:11px; color:#fcd34d;">v2 cURL</strong>
+                <button class="btn-secondary" onclick="copyText('cmpV2CurlPre')">Copy</button>
+              </div>
+              <pre id="cmpV2CurlPre">${escapeHtml(v2.curl_command || '')}</pre>
+            </div>
+            <div class="code-drawer" id="cmpV2JsonDrawer">
+              <pre>${escapeHtml(JSON.stringify({ engine_id: v2.engine_id, request: v2.request_payload, nlu_info: v2.nlu_info }, null, 2))}</pre>
+            </div>
+          </div>
+          ${v2HitsHtml}
+        </div>
+
+        <div class="sbs-col" style="border-top:2px solid #10b981;">
+          <div class="sbs-col-header">
+            <div class="sbs-col-title">
+              <span style="color:#34d399;">v3: ent-bq-5stores-master-v3-app</span>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <span style="font-size:12px; color:var(--text-secondary);">${v3.search_ms} ms</span>
+                <button class="btn-secondary" onclick="toggleDrawer('cmpV3CurlDrawer')">cURL</button>
+                <button class="btn-secondary" onclick="toggleDrawer('cmpV3JsonDrawer')">JSON</button>
+              </div>
+            </div>
+            <div class="kv-rows">
+              <div class="kv-row">
+                <span class="kv-label">Compiled Specs</span>
+                <span class="kv-val" style="color:#34d399;">${escapeHtml(v3.extracted_filters || 'None')}</span>
+              </div>
+            </div>
+            <div class="code-drawer" id="cmpV3CurlDrawer">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <strong style="font-size:11px; color:#34d399;">v3 cURL</strong>
+                <button class="btn-secondary" onclick="copyText('cmpV3CurlPre')">Copy</button>
+              </div>
+              <pre id="cmpV3CurlPre">${escapeHtml(v3.curl_command || '')}</pre>
+            </div>
+            <div class="code-drawer" id="cmpV3JsonDrawer">
+              <pre>${escapeHtml(JSON.stringify({ engine_id: v3.engine_id, request: v3.request_payload, nlu_info: v3.nlu_info }, null, 2))}</pre>
+            </div>
+          </div>
+          ${v3HitsHtml}
+        </div>
+      `;
+    }
+
+    async function explainHit(prefix, idx, btn) {
+      let respObj = null;
+      if (prefix === 'single') respObj = LAST_SINGLE_RESPONSE;
+      else if (prefix === 'sbs_nlqu' && LAST_SBS_RESPONSE) respObj = LAST_SBS_RESPONSE.vertex_nlqu;
+      else if (prefix === 'sbs_gem' && LAST_SBS_RESPONSE) respObj = LAST_SBS_RESPONSE.gemini_boost;
+      else if (prefix === 'cmp_v2' && LAST_CMP_APPS_RESPONSE) respObj = LAST_CMP_APPS_RESPONSE.app_v2;
+      else if (prefix === 'cmp_v3' && LAST_CMP_APPS_RESPONSE) respObj = LAST_CMP_APPS_RESPONSE.app_v3;
+
+      if (!respObj || !respObj.hits || !respObj.hits[idx]) return;
+      const hit = respObj.hits[idx];
+      const box = document.getElementById(`exp-${prefix}-${idx}`);
+      box.style.display = 'block';
+      box.innerHTML = 'Generating relevance diagnosis...';
+      btn.disabled = true;
+
+      try {
+        const res = await fetch('/api/explain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            search_app: respObj.search_app,
+            query: respObj.query,
+            extracted_filters: respObj.extracted_filters,
+            rewritten_query: respObj.rewritten_query,
+            hit,
+          }),
+        });
+        const data = await res.json();
+        if (data.status === 'ERROR') {
+          box.innerHTML = `<span style="color:#fb7185;">${escapeHtml(data.error)}</span>`;
+          return;
+        }
+        box.innerHTML = `
+          <div style="font-weight:700; color:#c084fc; margin-bottom:4px;">
+            ${escapeHtml(data.model)} (${data.latency_ms} ms)
+          </div>
+          <div style="margin-bottom:5px; color:#f8fafc; font-weight:600;">${escapeHtml(data.one_liner || '')}</div>
+          <div style="font-size:11.5px; color:var(--text-secondary);">
+            <strong>Expected:</strong> ${escapeHtml(data.expected || '')} &nbsp;•&nbsp;
+            <strong>Actual:</strong> ${escapeHtml(data.actual || '')} &nbsp;•&nbsp;
+            <strong>Why:</strong> ${escapeHtml(data.why || '')} &nbsp;•&nbsp;
+            <strong style="color:#34d399;">Fix:</strong> ${escapeHtml(data.fix || '')}
+          </div>
+        `;
+      } catch (e) {
+        box.innerHTML = `<span style="color:#fb7185;">Error: ${escapeHtml(e.message)}</span>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      updateAppLabels();
+      updateModelLabels();
+      await loadPresets();
+      switchTab('sbs');
+    });
+  </script>
+</body>
+</html>

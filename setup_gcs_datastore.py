@@ -1,13 +1,14 @@
 """Upload sample entertainment data to GCS and create a Discovery Engine DataStore with 4-hour periodic GCS sync."""
 
+import datetime
 import json
 import os
 import subprocess
 import time
 import google.auth
+import google.auth.credentials
 from google.auth.transport import mtls
 from google.auth.transport.requests import AuthorizedSession
-from google.oauth2.credentials import Credentials
 
 from config import (
     COLLECTION_DISPLAY_NAME,
@@ -21,40 +22,54 @@ from config import (
     LOCAL_JSONL_FILE,
     LOCATION,
     PROJECT_ID,
+    PROJECT_NUMBER,
     REFRESH_INTERVAL_SECONDS,
 )
 
 
-def get_discovery_session() -> tuple[AuthorizedSession, str]:
-    """Create an authenticated session (supporting CBA/mTLS when using gcloud tokens)."""
-    try:
-        creds, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            quota_project_id=PROJECT_ID,
-        )
-        session = AuthorizedSession(creds)
-        if mtls.has_default_client_cert_source():
-            session.configure_mtls_channel(mtls.default_client_cert_source())
-            base_url = "https://discoveryengine.mtls.googleapis.com/v1alpha"
-        else:
-            base_url = "https://discoveryengine.googleapis.com/v1alpha"
-        # Quick probe to verify ADC works
-        probe = session.get(
-            f"{base_url}/projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores"
-        )
-        if probe.status_code == 200:
-            return session, base_url
-    except Exception:
-        pass
+class _GcloudCliCredentials(google.auth.credentials.Credentials):
+    """Auto-refreshing credentials backed by `gcloud auth print-access-token`."""
 
-    # Fallback to active gcloud account token with mTLS
-    cmd = ["gcloud", "auth", "print-access-token"]
-    if GCLOUD_ACCOUNT:
-        cmd.extend(["--account", GCLOUD_ACCOUNT])
-    token = subprocess.check_output(cmd, text=True).strip()
-    creds = Credentials(token=token, quota_project_id=PROJECT_ID)
+    def __init__(self, account: str = "", quota_project_id: str | None = None) -> None:
+        super().__init__()
+        self._account = account
+        self._quota_project_id = quota_project_id
+        self.uses_impersonation = False
+        self.refresh(None)
+
+    @property
+    def quota_project_id(self) -> str | None:
+        return self._quota_project_id
+
+    def refresh(self, request) -> None:
+        cmd = ["gcloud", "auth", "print-access-token"]
+        if self._account:
+            cmd.extend(["--account", self._account])
+        token = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True).strip()
+        if len(token) < 500 and PROJECT_NUMBER:
+            imp_cmd = cmd + [f"--impersonate-service-account={PROJECT_NUMBER}-compute@developer.gserviceaccount.com"]
+            try:
+                imp_token = subprocess.check_output(imp_cmd, stderr=subprocess.DEVNULL, text=True).strip()
+                if imp_token:
+                    token = imp_token
+                    self.uses_impersonation = True
+            except Exception:
+                pass
+        self.token = token
+        # Refresh proactively after 50 minutes (gcloud tokens last 60 minutes)
+        self.expiry = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(minutes=50)
+
+    def apply(self, headers, token=None) -> None:
+        headers["authorization"] = f"Bearer {token or self.token}"
+        if self._quota_project_id:
+            headers["x-goog-user-project"] = self._quota_project_id
+
+
+def get_discovery_session() -> tuple[AuthorizedSession, str]:
+    """Create an authenticated session using auto-refreshing gcloud CLI credentials (with mTLS support)."""
+    creds = _GcloudCliCredentials(account=GCLOUD_ACCOUNT, quota_project_id=PROJECT_ID)
     session = AuthorizedSession(creds)
-    if mtls.has_default_client_cert_source():
+    if not creds.uses_impersonation and mtls.has_default_client_cert_source():
         session.configure_mtls_channel(mtls.default_client_cert_source())
         base_url = "https://discoveryengine.mtls.googleapis.com/v1alpha"
     else:
