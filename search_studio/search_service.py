@@ -46,7 +46,7 @@ from search_studio.intent_extractor import (
     resolve_gemini_endpoint_and_config,
 )
 from search_studio.prompts import build_explain_hit_prompt
-from search_studio.router_api import decide_query_route_gemma3
+from search_studio.router_api import DEFAULT_ROUTER_MODEL, decide_query_route_gemma3
 
 def build_curl_command(payload: Dict[str, Any], search_path: str = SEARCH_PATH) -> str:
     """Build a copy-pasteable, sanitized `curl` command for the Search Studio UI inspector drawer."""
@@ -137,7 +137,7 @@ def run_live_search(params: Dict[str, Any]) -> Dict[str, Any]:
         nlu_mode = "llm_boost"
 
     selected_model = str(params.get("gemini_model") or DEFAULT_BOOST_MODEL).strip()
-    router_model = str(params.get("router_model") or "local:gemma-3-1b-it-qat-4bit").strip()
+    router_model = str(params.get("router_model") or DEFAULT_ROUTER_MODEL).strip()
     use_llm_cache = bool(params.get("use_llm_cache", False))
     page_size = max(1, min(50, int(params.get("page_size", 10))))
     raw_behavior = str(params.get("filter_behavior") or "SOFT_BOOST").strip().upper()
@@ -510,7 +510,7 @@ def run_side_by_side_nlqu_vs_llm(params: Dict[str, Any]) -> Dict[str, Any]:
     app_cfg = get_search_app_config(params.get("search_app"))
     query = str(params.get("query") or "").strip()
     use_llm_cache = bool(params.get("use_llm_cache", False))
-    router_model = str(params.get("router_model") or "local:gemma-3-1b-it-qat-4bit").strip()
+    router_model = str(params.get("router_model") or DEFAULT_ROUTER_MODEL).strip()
 
     nlqu_params = dict(params)
     nlqu_params["nlu_mode"] = "vertex_native"

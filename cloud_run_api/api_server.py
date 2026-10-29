@@ -25,6 +25,8 @@ from search_studio.client import (
     get_thread_host_session,
 )
 from search_studio.router_api import (
+    _get_or_init_setfit_minilm_runtime,
+    decide_query_route_setfit_minilm,
     handle_route_decision_request,
     handle_router_benchmark_request,
 )
@@ -38,7 +40,11 @@ from search_studio.search_service import (
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Pre-warm GCP ADC token or local ECP proxy and initialize HTTP keep-alive sessions."""
+    """Pre-warm SetFit-MiniLM ONNX runtime, GCP ADC token, and HTTP keep-alive sessions."""
+    try:
+        _get_or_init_setfit_minilm_runtime()
+    except Exception as exc:
+        print(f"[FastAPI Startup] SetFit-MiniLM pre-warm warning: {exc}", flush=True)
     if USE_ADC:
         try:
             _get_adc_token()
@@ -52,13 +58,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Entertainment Agent Search & Gemma 3 Decision Router API",
+    title="Entertainment Agent Search & Gemma 3 / SetFit-MiniLM Decision Router API",
     description=(
-        "High-speed headless FastAPI backend (`asia-south1`) for Vertex AI Model Garden "
-        "`google/gemma-3-270m-it` (L4 vLLM `--enable-prefix-caching`), `gemini-3.5-flash-lite`, "
+        "High-speed headless FastAPI backend (`asia-south1`) for SetFit-MiniLM-L6-v2 Contrastive Classifier, "
+        "Vertex AI Model Garden `google/gemma-3-1b-it` (T4 vLLM `--enable-prefix-caching`), `gemini-3.5-flash-lite`, "
         "and Vertex AI Agent Search (`v3` / `v2`)."
     ),
-    version="4.0.0",
+    version="4.1.0",
     default_response_class=ORJSONResponse,
     lifespan=lifespan,
 )
@@ -72,14 +78,16 @@ app.add_middleware(
 
 
 def _origin_tag() -> str:
-    """Return an identifier describing whether the request executed on Cloud Run (`asia-south1`) or locally."""
+    """Return an identifier describing whether the request executed on Cloud Run / Vertex AI (`asia-south1`) or locally."""
+    if os.getenv("AIP_HTTP_PORT") or os.getenv("VERTEX_ENDPOINT"):
+        return "vertex_endpoint_asia_south1"
     return "cloud_run_asia_south1" if os.getenv("K_SERVICE") else "local_fastapi"
 
 
 @app.get("/")
 @app.get("/healthz")
 def healthz() -> Dict[str, Any]:
-    """Health and service metadata endpoint."""
+    """Health and service metadata endpoint (also serves Vertex AI custom container health check)."""
     return {
         "status": "OK",
         "framework": "FastAPI + Uvicorn (uvloop + httptools + orjson)",
@@ -91,6 +99,7 @@ def healthz() -> Dict[str, Any]:
         "docs_url": "/docs",
         "endpoints": [
             "/healthz",
+            "/predict",
             "/docs",
             "/api/presets",
             "/api/route_decision",
@@ -103,6 +112,34 @@ def healthz() -> Dict[str, Any]:
     }
 
 
+@app.post("/predict")
+async def vertex_predict(request: Request) -> Dict[str, Any]:
+    """Vertex AI Online Prediction custom container endpoint (`POST /predict`).
+    Accepts `{"instances": [{"query": "...", "include_reason": true}]}` (or a list of query strings)
+    and returns `{"predictions": [...]}` classified by SetFit-MiniLM-L6-v2 in ~0.9 ms per query.
+    """
+    try:
+        body = await request.json()
+        instances = body.get("instances") or []
+        preds = []
+        for inst in instances:
+            if isinstance(inst, str):
+                q_str = inst
+                inc_reason = True
+            elif isinstance(inst, dict):
+                q_str = str(inst.get("query") or inst.get("prompt") or inst.get("text") or "").strip()
+                raw_inc = inst.get("include_reason", True)
+                inc_reason = str(raw_inc).lower() not in ("false", "0", "no") if isinstance(raw_inc, str) else bool(raw_inc)
+            else:
+                continue
+            dec = decide_query_route_setfit_minilm(query=q_str, use_cache=False, include_reason=inc_reason)
+            dec["origin_env"] = _origin_tag()
+            preds.append(dec)
+        return {"predictions": preds}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/presets")
 def get_presets() -> Dict[str, Any]:
     """Return the 30 benchmark search queries."""
@@ -112,8 +149,8 @@ def get_presets() -> Dict[str, Any]:
 @app.get("/api/route_decision")
 def get_route_decision(
     query: str = Query(..., description="User search query to classify"),
-    model: Optional[str] = Query(None, description="Router model (`vertex:gemma-3-270m-it` or `gemini-3.5-flash-lite`)"),
-    include_reason: bool = Query(True, description="Include `reason` field (`false` for fast 6-token mode)"),
+    model: Optional[str] = Query(None, description="Router model (`setfit:minilm-l6-v2`, `vertex:setfit-minilm-l6-v2`, `vertex:gemma-3-1b-it`, or `gemini-3.5-flash-lite`)"),
+    include_reason: bool = Query(True, description="Include `reason` field (`false` for fast route-only mode)"),
     use_cache: bool = Query(False, description="Enable in-memory LRU cache"),
     execute_search: bool = Query(False, description="Also execute downstream Vertex AI Search"),
 ) -> Dict[str, Any]:
@@ -148,7 +185,7 @@ async def post_route_decision(request: Request) -> Dict[str, Any]:
 
 @app.get("/api/benchmark_router")
 def get_benchmark_router(
-    model: str = Query("vertex:gemma-3-270m-it", description="Router model to benchmark (`vertex:gemma-3-270m-it` or `gemini-3.5-flash-lite`)"),
+    model: str = Query("setfit:minilm-l6-v2", description="Router model to benchmark (`setfit:minilm-l6-v2`, `vertex:setfit-minilm-l6-v2`, `vertex:gemma-3-1b-it`, or `gemini-3.5-flash-lite`)"),
     include_reason: Optional[bool] = Query(None, description="Optional: benchmark only `true` or `false` mode (default runs both)"),
 ) -> Dict[str, Any]:
     """Run the 30-query Decision Router benchmark directly inside the Cloud Run (`asia-south1`) container."""

@@ -145,17 +145,24 @@ VERTEX_GEMMA_ROUTER_REGION: str = _get(
     "VERTEX_GEMMA_ROUTER_REGION", "vertex_gemma_router_region", "asia-south1"
 )
 VERTEX_GEMMA_ROUTER_ENDPOINT_ID: str = _get(
-    "VERTEX_GEMMA_ROUTER_ENDPOINT_ID", "vertex_gemma_router_endpoint_id", "6882610737366171648"
+    "VERTEX_GEMMA_ROUTER_ENDPOINT_ID", "vertex_gemma_router_endpoint_id", "5229789674121199616"
 )
 VERTEX_GEMMA_ROUTER_MODEL_ID: str = _get(
-    "VERTEX_GEMMA_ROUTER_MODEL_ID", "vertex_gemma_router_model_id", "4341553603668869120"
+    "VERTEX_GEMMA_ROUTER_MODEL_ID", "vertex_gemma_router_model_id", "7622425932208275456"
 )
 VERTEX_GEMMA_1B_ROUTER_ENDPOINT_ID: str = _get(
-    "VERTEX_GEMMA_1B_ROUTER_ENDPOINT_ID", "vertex_gemma_1b_router_endpoint_id", "3167703994738933760"
+    "VERTEX_GEMMA_1B_ROUTER_ENDPOINT_ID", "vertex_gemma_1b_router_endpoint_id", "5229789674121199616"
 )
 VERTEX_GEMMA_1B_ROUTER_MODEL_ID: str = _get(
-    "VERTEX_GEMMA_1B_ROUTER_MODEL_ID", "vertex_gemma_1b_router_model_id", "2733768536697602048"
+    "VERTEX_GEMMA_1B_ROUTER_MODEL_ID", "vertex_gemma_1b_router_model_id", "7622425932208275456"
+)
+VERTEX_SETFIT_ROUTER_ENDPOINT_ID: str = _get(
+    "VERTEX_SETFIT_ROUTER_ENDPOINT_ID", "vertex_setfit_router_endpoint_id", "1848149303919378432"
+)
+VERTEX_SETFIT_ROUTER_MODEL_ID: str = _get(
+    "VERTEX_SETFIT_ROUTER_MODEL_ID", "vertex_setfit_router_model_id", "3819136046893891584"
 )
 CLOUD_RUN_API_URL: str = _get(
     "CLOUD_RUN_API_URL", "cloud_run_api_url", ""
 )
+

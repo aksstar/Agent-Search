@@ -106,21 +106,23 @@ def build_gemma_chat_messages(dctx: Dict[str, str]) -> List[Dict[str, str]]:
 
 
 def build_gemma_router_chat_messages() -> List[Dict[str, str]]:
-    """Build a compact (~367-token) multi-turn chat template for Gemma 3's 512-token
+    """Build a compact (~405-token) multi-turn chat template for Gemma 3's 512-token
     sliding-window `RotatingKVCache` to decide whether a query requires LLM Intent/Boost
     extraction (`CALL_LLM_INTENT`) or can go directly to Agent Search (`DIRECT_AGENT_SEARCH`).
     """
     rules = (
         "Entertainment Query Router.\n"
         'Output JSON: {"route":"DIRECT_AGENT_SEARCH"|"CALL_LLM_INTENT","reason":"..."}\n'
-        "- DIRECT_AGENT_SEARCH: pure movie/show title, artist name, or bank offer with NO filters.\n"
-        "- CALL_LLM_INTENT: has city/locality/near, price/under/between/free, date/time/tonight/weekend/late night, format(IMAX/4DX/3D/Dolby/recliner), language, genre/category, negation(without/not), or occasion."
+        "- DIRECT_AGENT_SEARCH: pure movie/show title, artist name, venue/theatre name, or bank offer with NO filters.\n"
+        "- CALL_LLM_INTENT: has city/locality/near, price/under/between/free, date/time/tonight/tomorrow/weekend/late night, format(IMAX/4DX/3D/Dolby/recliner), language, genre/category, or negation(without/not)."
     )
     return [
         {"role": "user", "content": rules + "\nQuery: Spider-Man: No Way Home"},
         {"role": "assistant", "content": '{"route":"DIRECT_AGENT_SEARCH","reason":"Direct movie title lookup with no facet filters"}'},
         {"role": "user", "content": "Query: Zakir Khan show"},
         {"role": "assistant", "content": '{"route":"DIRECT_AGENT_SEARCH","reason":"Direct artist show lookup with no city or date filter"}'},
+        {"role": "user", "content": "Query: HDFC bank Buy 1 Get 1 offer"},
+        {"role": "assistant", "content": '{"route":"DIRECT_AGENT_SEARCH","reason":"Direct bank offer lookup with no city or date filter"}'},
         {"role": "user", "content": "Query: IMAX 3D movies in Mumbai"},
         {"role": "assistant", "content": '{"route":"CALL_LLM_INTENT","reason":"Has format (IMAX 3D) and city (Mumbai) filters"}'},
         {"role": "user", "content": "Query: concerts between 1000 and 3000 in delhi"},

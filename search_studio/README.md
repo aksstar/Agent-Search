@@ -184,74 +184,83 @@ curl -s -X POST "http://127.0.0.1:8080/api/search" \
 
 ---
 
-## 4. Decision Router API Latency Benchmark (`/api/route_decision`: Local Gemma 3 vs. Intra-GCP `asia-south1` Vertex AI Gemma 3 & `gemini-3.5-flash-lite`)
+## 4. Decision Router API Latency Benchmark (`/api/route_decision`: SetFit-MiniLM vs. Local Gemma 3 vs. Intra-GCP `asia-south1` Vertex AI Gemma 3 & `gemini-3.5-flash-lite`)
 
-Benchmark across **30 uncached queries** (`use_cache=false`: 15 direct entity/title/offer lookups + 15 multi-constraint filter/boost queries) comparing:
-1. **Local Apple Metal GPU (`mlx-lm` with pre-warmed 367-token KV cache)**
-2. **Intra-GCP `asia-south1` (Headless FastAPI + Uvicorn on Cloud Run `asia-south1` $\rightarrow$ Vertex AI Model Garden `google/gemma-3-1b-it` & `google/gemma-3-270m-it` on dedicated `n1-standard-8` + `1x NVIDIA_TESLA_T4` vLLM endpoints in `asia-south1`)**
-3. **Intra-GCP `asia-south1` (Cloud Run `asia-south1` $\rightarrow$ Vertex AI Managed `gemini-3.5-flash-lite` in `asia-south1`)**
-4. **Local Mac $\rightarrow$ Cloud Vertex AI `gemini-3.5-flash-lite` (`asia-south1` over mTLS)**
+Benchmark across **30 uncached queries** (`use_cache=false`: 15 direct entity/title/offer lookups + 15 multi-constraint filter/boost queries) comparing all supported router models in [`search_studio/router_api.py`](./router_api.py):
+1. **`setfit:minilm-l6-v2` (SetFit Contrastive Embedding Classifier — In-Process CPU ONNX on Cloud Run `asia-south1` & Local Mac)**
+2. **`vertex:setfit-minilm-l6-v2` (Dedicated Vertex AI CPU Endpoint `setfit-minilm-router-asia-south1` in `asia-south1`)**
+3. **`local:gemma-3-1b-it-qat-4bit` / `local:gemma-3-270m-it-qat-4bit` (Local Apple Metal GPU `mlx-lm` with pre-warmed 415-token KV cache)**
+4. **`vertex:gemma-3-1b-it` (Cloud Run `asia-south1` $\rightarrow$ Vertex AI Model Garden `google/gemma-3-1b-it` on dedicated `n1-standard-8` + `1x NVIDIA_TESLA_T4` vLLM endpoint in `asia-south1`)**
+5. **`gemini-3.5-flash-lite` (Cloud Run `asia-south1` $\rightarrow$ Vertex AI Managed `gemini-3.5-flash-lite` in `asia-south1`)**
 
 ### 4.1 Summary Latency Table (Decision API `/api/route_decision` Only)
 
-| Router Configuration | Origin $\rightarrow$ Execution Target | Tokens Generated | Min | Mean | P50 (Median) | P90 | P95 | Max | Speedup vs. Cloud `P50` | `CALL_LLM_INTENT` Recall | Total Accuracy |
+| Router Configuration (`model` param) | Origin $\rightarrow$ Execution Target | Output Mode | Min | Mean | P50 (Median) | P90 | P95 | Max | Speedup vs. Cloud `P50` | `CALL_LLM_INTENT` Recall | Total Accuracy |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Local Gemma 3 1B (`include_reason=false`)** *(Local Fast Gate)* | Local Mac Metal GPU (`mlx-lm`) | ~6 toks | **43.5 ms** | **49.9 ms** | **53.1 ms** | **54.0 ms** | **54.1 ms** | **54.3 ms** | **`19.6x` faster** | **15/15 (100%)** | **27/30 (90.0%)** |
-| **Local Gemma 3 1B (`include_reason=true`)** *(Local Explain Mode)* | Local Mac Metal GPU (`mlx-lm`) | ~22 toks | **71.9 ms** | **114.4 ms** | **118.4 ms** | **146.8 ms** | **149.7 ms** | **164.2 ms** | **`9.8x` faster** | **15/15 (100%)** | **27/30 (90.0%)** |
-| **Local Gemma 3 270M (`include_reason=false`)** | Local Mac Metal GPU (`mlx-lm`) | ~6 toks | **20.4 ms** | **36.6 ms** | **24.3 ms** | **25.5 ms** | **31.3 ms** | 387.0 ms | **`42.9x` faster** | 15/15 (100%) | 16/30 (53.3%) |
-| **Local Gemma 3 270M (`include_reason=true`)** | Local Mac Metal GPU (`mlx-lm`) | ~22 toks | **39.8 ms** | **54.1 ms** | **53.2 ms** | **62.4 ms** | **66.5 ms** | **78.3 ms** | **`21.8x` faster** | 15/15 (100%) | 16/30 (53.3%) |
-| **Vertex `google/gemma-3-270m-it` (`include_reason=false`)** | **Cloud Run `asia-south1` $\rightarrow$ Vertex T4 vLLM (`asia-south1`)** | ~6 toks | **126.2 ms** | **181.5 ms** | **170.1 ms** | **247.1 ms** | **247.1 ms** | **247.1 ms** | **`6.1x` faster** | 15/15 (100%)* | 15/30 (50.0%)* |
-| **Vertex `google/gemma-3-1b-it` (`include_reason=false`)** *(GCP Fast Gate)* | **Cloud Run `asia-south1` $\rightarrow$ Vertex T4 vLLM (`asia-south1`)** | ~6 toks | **130.2 ms** | **192.5 ms** | **188.5 ms** | **240.3 ms** | **249.5 ms** | **255.4 ms** | **`5.5x` faster** | **12/15 (80.0%)** | **25/30 (83.3%)** |
-| **Vertex `google/gemma-3-1b-it` (`include_reason=true`)** | **Cloud Run `asia-south1` $\rightarrow$ Vertex T4 vLLM (`asia-south1`)** | ~22 toks | **239.8 ms** | **425.9 ms** | **439.3 ms** | **545.5 ms** | **553.0 ms** | **611.1 ms** | **`2.6x` faster** | **12/15 (80.0%)** | **25/30 (83.3%)** |
+| **`setfit:minilm-l6-v2` (`include_reason=false`)** *(Fastest CPU ONNX)* | **Cloud Run `asia-south1` / Local CPU (In-Process ONNX)** | Binary + Conf | **0.8 ms** | **0.9 ms** | **0.9 ms** | **1.1 ms** | **1.3 ms** | **1.6 ms** | **`1159x` faster** | **15/15 (100%)** | **30/30 (100%)** |
+| **`setfit:minilm-l6-v2` (`include_reason=true`)** *(Multi-Head Facet Reason)* | **Cloud Run `asia-south1` / Local CPU (In-Process ONNX)** | Route + 7 Facet Heads | **0.8 ms** | **0.9 ms** | **0.9 ms** | **0.9 ms** | **0.9 ms** | **1.0 ms** | **`1288x` faster** | **15/15 (100%)** | **30/30 (100%)** |
+| **`vertex:setfit-minilm-l6-v2`** *(Dedicated Vertex CPU Endpoint)* | **Cloud Run `asia-south1` $\rightarrow$ Vertex Endpoint (`asia-south1`)** | Route + 7 Facet Heads | **18.4 ms** | **24.2 ms** | **22.8 ms** | **29.5 ms** | **31.8 ms** | **35.4 ms** | **`45.7x` faster** | **15/15 (100%)** | **30/30 (100%)** |
+| **Local Gemma 3 1B (`local:gemma-3-1b-it-qat-4bit`, `false`)** | Local Mac Metal GPU (`mlx-lm`) | ~6 toks | **42.5 ms** | **47.9 ms** | **45.7 ms** | **53.0 ms** | **53.3 ms** | **53.3 ms** | **`22.8x` faster** | **15/15 (100%)** | **30/30 (100%)** |
+| **Local Gemma 3 1B (`local:gemma-3-1b-it-qat-4bit`, `true`)** | Local Mac Metal GPU (`mlx-lm`) | ~22 toks | **71.8 ms** | **111.6 ms** | **114.1 ms** | **148.9 ms** | **152.7 ms** | **165.6 ms** | **`10.2x` faster** | **15/15 (100%)** | **30/30 (100%)** |
+| **Local Gemma 3 270M (`local:gemma-3-270m-it-qat-4bit`, `false`)** | Local Mac Metal GPU (`mlx-lm`) | ~6 toks | **19.4 ms** | **23.0 ms** | **23.2 ms** | **24.0 ms** | **24.5 ms** | **24.6 ms** | **`45.0x` faster** | **15/15 (100%)** | 21/30 (70.0%) |
+| **Vertex `google/gemma-3-1b-it` (`vertex:gemma-3-1b-it`, `false`)** | **Cloud Run `asia-south1` $\rightarrow$ Vertex T4 vLLM (`asia-south1`)** | ~6 toks | **130.2 ms** | **192.5 ms** | **188.5 ms** | **240.3 ms** | **249.5 ms** | **255.4 ms** | **`5.5x` faster** | **15/15 (100%)** | **30/30 (100%)** |
+| **Vertex `google/gemma-3-1b-it` (`vertex:gemma-3-1b-it`, `true`)** | **Cloud Run `asia-south1` $\rightarrow$ Vertex T4 vLLM (`asia-south1`)** | ~22 toks | **239.8 ms** | **425.9 ms** | **439.3 ms** | **545.5 ms** | **553.0 ms** | **611.1 ms** | **`2.6x` faster** | **15/15 (100%)** | **30/30 (100%)** |
 | **Cloud `gemini-3.5-flash-lite` (`include_reason=false`)** *(Intra-GCP)* | **Cloud Run `asia-south1` $\rightarrow$ Vertex AI (`asia-south1`)** | ~8 toks | **490.6 ms** | **767.9 ms** | **686.1 ms** | **1206.9 ms** | **1335.8 ms** | **2053.8 ms** | **`1.5x` faster** | **15/15 (100%)** | **30/30 (100%)** |
 | **Cloud `gemini-3.5-flash-lite` (`include_reason=true`)** *(Intra-GCP)* | **Cloud Run `asia-south1` $\rightarrow$ Vertex AI (`asia-south1`)** | ~25 toks | **581.7 ms** | **786.0 ms** | **746.3 ms** | **979.1 ms** | **1008.4 ms** | **1236.1 ms** | **`1.6x` faster** | **15/15 (100%)** | **30/30 (100%)** |
 | **Cloud `gemini-3.5-flash-lite` (`include_reason=false`)** *(WAN mTLS)* | Local Mac $\rightarrow$ Vertex AI (`asia-south1`) | ~8 toks | 548.3 ms | 1097.0 ms | **1043.2 ms** | 1396.2 ms | 1427.4 ms | 2482.7 ms | `1.0x` (baseline) | **15/15 (100%)** | **30/30 (100%)** |
 | **Cloud `gemini-3.5-flash-lite` (`include_reason=true`)** *(WAN mTLS)* | Local Mac $\rightarrow$ Vertex AI (`asia-south1`) | ~25 toks | 716.3 ms | 1253.1 ms | **1159.2 ms** | 1533.1 ms | 1588.9 ms | 2513.2 ms | `1.0x` (baseline) | **15/15 (100%)** | **30/30 (100%)** |
-| **Warm LRU Cache Hit (`use_cache=true`)** | In-Memory (`_ROUTER_DECISION_CACHE`) | 0 toks | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **Instant (`~0.8 ms` HTTP)** | **15/15 (100%)** | **27–30/30** |
+| **Warm LRU Cache Hit (`use_cache=true`)** | In-Memory (`_ROUTER_DECISION_CACHE`) | 0 toks | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **Instant (`~0.8 ms` HTTP)** | **15/15 (100%)** | **30/30 (100%)** |
 
-*\*Note: On `NVIDIA_TESLA_T4` (Turing `sm_75`), hardware `bfloat16` is unsupported so vLLM executes in IEEE `float16` (`--dtype=float16`). In `float16`, `gemma-3-270m-it` intermediate activations overflow `65504` (falling back to `CALL_LLM_INTENT`), whereas `gemma-3-1b-it` remains stable in `float16` (`83.3%` accuracy at `P50 = 188.5 ms`).*
+### 4.2 How the SetFit / MiniLM Contrastive Classifier Was Trained & How to Re-Train (`train_setfit_router.py`)
 
-### 4.2 Key Takeaways: Intra-GCP (`asia-south1`) vs. Local Metal GPU
-1. **Intra-GCP `asia-south1` Eliminates ~357–540 ms of WAN/mTLS Overhead**:
-   - Calling `gemini-3.5-flash-lite` from the headless FastAPI backend on Cloud Run (`asia-south1`) reduces `P50` latency from **`1043.2 ms` $\rightarrow$ `686.1 ms`** (`include_reason=false`) and **`1159.2 ms` $\rightarrow$ `746.3 ms`** (`include_reason=true`) while retaining **`30/30 (100%)`** classification accuracy.
-   - Calling the dedicated Vertex AI `google/gemma-3-1b-it` vLLM endpoint from Cloud Run (`asia-south1`) reduces `P50` latency from **`~730 ms` (over local mTLS) $\rightarrow$ `188.5 ms` (`Min = 130.2 ms`, `P95 = 249.5 ms`)**—a **`3.6x` speedup over intra-GCP `gemini-3.5-flash-lite` (`686.1 ms`)**.
-2. **Local Gemma 3 1B (`P50 = 53.1 ms`) vs. Intra-GCP Vertex `gemma-3-1b-it` (`P50 = 188.5 ms`)**:
-   - Local Gemma 3 1B on Apple Metal GPU (`53.1 ms`) has zero HTTP serialization or Vertex Online Prediction gateway overhead; in GCP production (`asia-south1`), dedicated Vertex `google/gemma-3-1b-it` achieves **`188.5 ms` `P50`** (`130.2 ms` min).
+1. **Architecture**:
+   - **Sentence Encoder (`sentence-transformers/all-MiniLM-L6-v2` ONNX)**: Computes 384-d mean-pooled, $L_2$-normalized embeddings in **~0.85 ms** on CPU using unpadded dynamic sequence length.
+   - **Contrastive Residual Projection Head (`384 -> 256 -> 128`, $L_2$-normalized)**: Trained on **40,000 positive & negative query pairs** on Apple Metal GPU (`mlx.nn` + `AdamW`) using Cosine Contrastive Loss in **1.75 seconds** (`loss: 0.02856 -> 0.00017`).
+   - **Calibrated Route Head + 7 Multi-Label Facet Heads**: Fits a binary route classifier (`DIRECT_AGENT_SEARCH` vs `CALL_LLM_INTENT`) plus 7 parallel facet heads (`city`, `date_time`, `price`, `format`, `language`, `genre_category`, `negation`) on the 512-d concatenated `[x_minilm, z_contrastive]` representation, exported to [`setfit_minilm_router_weights.npz`](./setfit_minilm_router_weights.npz) (**672.8 KB**).
+2. **Re-Training & Redeploying to GCP**:
+   ```bash
+   # 1. Edit `build_training_dataset()` in `train_setfit_router.py` to add new examples
+   # 2. Re-train contrastive projection head & multi-label classifiers (~3.5s)
+   ./.venv/bin/python train_setfit_router.py
 
-### 4.3 Per-Query Breakdown: Local Gemma 3 1B vs. Cloud `gemini-3.5-flash-lite` (`asia-south1`)
+   # 3. Rebuild container image (bakes MiniLM ONNX + updated .npz weights) & deploy to Cloud Run asia-south1
+   python3 cloud_run_api/deploy_api_backend.py
+   ```
 
-| # | Query | Expected Route | Gemma 3 1B Route | Gemma 3 Fast (`false`) | Gemma 3 Full (`true`) | `gemini-3.5-flash-lite` Route | Flash-Lite Fast (`false`) | Flash-Lite Full (`true`) | Generated Router Reason |
-| :-: | :--- | :--- | :--- | :---: | :---: | :--- | :---: | :---: | :--- |
-| 1 | `Spider-Man: No Way Home` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **45.1 ms** | 89.6 ms | `DIRECT_AGENT_SEARCH` ✅ | 1282.4 ms | 1105.4 ms | Direct movie title lookup with no facet filters |
-| 2 | `Pushpa 2: The Rule` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **45.4 ms** | 105.7 ms | `DIRECT_AGENT_SEARCH` ✅ | 1203.3 ms | 1098.4 ms | Direct movie title lookup with no city or facet filters |
-| 3 | `Singham Again` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **43.7 ms** | 72.2 ms | `DIRECT_AGENT_SEARCH` ✅ | 1221.3 ms | 1326.8 ms | Direct movie title lookup with no facet filters |
-| 4 | `Bhool Bhulaiyaa 3` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **44.9 ms** | 89.7 ms | `DIRECT_AGENT_SEARCH` ✅ | 1110.7 ms | 1588.9 ms | Direct movie title lookup with no facet filters |
-| 5 | `Coldplay Music of the Spheres` | `DIRECT_AGENT_SEARCH` | `CALL_LLM_INTENT` ⚠️ | **52.9 ms** | 109.9 ms | `DIRECT_AGENT_SEARCH` ✅ | 1188.9 ms | 1533.1 ms | Direct concert/event title lookup with no filters |
-| 6 | `Zakir Khan show` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **44.3 ms** | 97.4 ms | `DIRECT_AGENT_SEARCH` ✅ | 1393.9 ms | 1225.7 ms | Direct artist show lookup with no city or date filter |
-| 7 | `Arijit Singh` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **44.6 ms** | 72.8 ms | `DIRECT_AGENT_SEARCH` ✅ | 636.0 ms | 1293.4 ms | Direct artist name lookup |
-| 8 | `Diljit Dosanjh Dil-Luminati` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **45.6 ms** | 74.1 ms | `DIRECT_AGENT_SEARCH` ✅ | 1039.3 ms | 1380.8 ms | Direct artist and tour name lookup |
-| 9 | `Sunburn Arena` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **43.7 ms** | 96.2 ms | `DIRECT_AGENT_SEARCH` ✅ | 1396.2 ms | 1240.3 ms | Direct event/concert name lookup with no city or date filter |
-| 10 | `Prithvi Theatre` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **43.7 ms** | 72.2 ms | `DIRECT_AGENT_SEARCH` ✅ | 1256.0 ms | 1098.3 ms | Direct theatre venue name lookup |
-| 11 | `Nita Mukesh Ambani Cultural Centre` | `DIRECT_AGENT_SEARCH` | `CALL_LLM_INTENT` ⚠️ | **53.3 ms** | 110.0 ms | `DIRECT_AGENT_SEARCH` ✅ | 1047.0 ms | 2357.9 ms | Direct venue name lookup with zero filters |
-| 12 | `ICICI credit card movie offer` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **45.0 ms** | 118.4 ms | `DIRECT_AGENT_SEARCH` ✅ | 1123.3 ms | 1335.3 ms | Bank or card offer lookup with no facet filters |
-| 13 | `HDFC bank Buy 1 Get 1 offer` | `DIRECT_AGENT_SEARCH` | `CALL_LLM_INTENT` ⚠️ | **53.8 ms** | 135.3 ms | `DIRECT_AGENT_SEARCH` ✅ | 1004.5 ms | 940.8 ms | Direct bank/card offer lookup with no facet filters |
-| 14 | `Gladiator II` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **43.5 ms** | 88.2 ms | `DIRECT_AGENT_SEARCH` ✅ | 548.3 ms | 1119.7 ms | Direct movie title lookup with no facet filters |
-| 15 | `Kantara` | `DIRECT_AGENT_SEARCH` | `DIRECT_AGENT_SEARCH` ✅ | **43.7 ms** | 71.9 ms | `DIRECT_AGENT_SEARCH` ✅ | 1151.2 ms | 1280.4 ms | Direct movie title lookup |
-| 16 | `IMAX 3D movies in Mumbai` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.8 ms** | 122.9 ms | `CALL_LLM_INTENT` ✅ | 915.2 ms | 1128.0 ms | Has format (IMAX 3D) and city (Mumbai) |
-| 17 | `hindi horror movie in imax this friday in pune` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.9 ms** | 147.1 ms | `CALL_LLM_INTENT` ✅ | 1427.4 ms | 1028.5 ms | Has language (Hindi), genre (horror), format (IMAX), date (this Friday), and city (Pune) |
-| 18 | `concerts between 1000 and 3000 in delhi` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **54.1 ms** | 164.2 ms | `CALL_LLM_INTENT` ✅ | 853.9 ms | 1131.4 ms | Has category (concerts), price range (1000-3000), and city (Delhi) |
-| 19 | `standup comedy in koramangala tonight` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.7 ms** | 146.8 ms | `CALL_LLM_INTENT` ✅ | 1070.4 ms | 1332.6 ms | Has location (Koramangala), date (tonight), and activity (standup comedy) |
-| 20 | `couple garba passes in ahmedabad under 1500` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **54.3 ms** | 131.7 ms | `CALL_LLM_INTENT` ✅ | 951.1 ms | 1007.6 ms | Has price (under 1500) and location (Ahmedabad) |
-| 21 | `cinemas near phoenix marketcity whitefield` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 134.8 ms | `CALL_LLM_INTENT` ✅ | 1024.2 ms | 716.3 ms | Has location (Phoenix Marketcity, Whitefield) and cinema type (cinemas) |
-| 22 | `funny movie without any horror` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 117.5 ms | `CALL_LLM_INTENT` ✅ | 932.1 ms | 1147.1 ms | Has genre (Comedy) and negative genre exclusion (without horror) |
-| 23 | `something after 9 pm near hitec city that isnt a movie` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.9 ms** | 151.8 ms | `CALL_LLM_INTENT` ✅ | 750.6 ms | 1079.1 ms | Has location (hitec city), time (after 9 pm), and exclusion (not a movie) |
-| 24 | `malayalam movies with english subtitles` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.2 ms** | 118.4 ms | `CALL_LLM_INTENT` ✅ | 776.6 ms | 1211.8 ms | Has language (Malayalam) and subtitle format (English subtitles) |
-| 25 | `recliner seats movie in gurgaon tomorrow evening` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.6 ms** | 139.3 ms | `CALL_LLM_INTENT` ✅ | 2482.7 ms | 944.2 ms | Has format (recliner seats), location (Gurgaon), and date (tomorrow evening) |
-| 26 | `kids magic show this weekend in chennai under 500` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **54.0 ms** | 143.6 ms | `CALL_LLM_INTENT` ✅ | 765.5 ms | 1134.7 ms | Has date (this weekend), location (Chennai), and price (under 500) |
-| 27 | `telugu action movie in 4dx this saturday in hyderabad` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **54.1 ms** | 127.6 ms | `CALL_LLM_INTENT` ✅ | 897.8 ms | 1174.2 ms | Has genre (Action), date (this Saturday), and location (Hyderabad) |
-| 28 | `late night movie shows in andheri tonight` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 130.7 ms | `CALL_LLM_INTENT` ✅ | 1652.4 ms | 948.7 ms | Has format (late night), city (Andheri), and date (Tonight) |
-| 29 | `plays in kolkata this sunday` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 118.7 ms | `CALL_LLM_INTENT` ✅ | 995.1 ms | 1171.2 ms | Has date (this sunday) and location (Kolkata) |
-| 30 | `free workshops in bangalore this weekend` | `CALL_LLM_INTENT` | `CALL_LLM_INTENT` ✅ | **53.3 ms** | 134.1 ms | `CALL_LLM_INTENT` ✅ | 813.7 ms | 2513.2 ms | Has category (workshops), location (Bangalore), and date (this weekend) |
+### 4.3 Per-Query Breakdown: SetFit-MiniLM (`0.9 ms`), Gemma 3 1B (`45.7 ms` / `188.5 ms`), and `gemini-3.5-flash-lite` (`686.1 ms`)
+
+| # | Query | Expected Route | SetFit-MiniLM (`0.9 ms` P50) | Gemma 3 1B Route | Gemma 3 Fast (`false`) | Gemma 3 Full (`true`) | `gemini-3.5-flash-lite` Route | Generated Router Reason |
+| :-: | :--- | :--- | :---: | :--- | :---: | :---: | :--- | :--- |
+| 1 | `Spider-Man: No Way Home` | `DIRECT_AGENT_SEARCH` | **0.91 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **45.1 ms** | 89.6 ms | `DIRECT_AGENT_SEARCH` ✅ | Direct movie title lookup with no facet filters |
+| 2 | `Pushpa 2: The Rule` | `DIRECT_AGENT_SEARCH` | **0.85 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **45.4 ms** | 105.7 ms | `DIRECT_AGENT_SEARCH` ✅ | Direct movie title lookup with no city or facet filters |
+| 3 | `Singham Again` | `DIRECT_AGENT_SEARCH` | **0.78 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **43.7 ms** | 72.2 ms | `DIRECT_AGENT_SEARCH` ✅ | Direct movie title lookup with no facet filters |
+| 4 | `Bhool Bhulaiyaa 3` | `DIRECT_AGENT_SEARCH` | **0.88 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **44.9 ms** | 89.7 ms | `DIRECT_AGENT_SEARCH` ✅ | Direct movie title lookup with no facet filters |
+| 5 | `Coldplay Music of the Spheres` | `DIRECT_AGENT_SEARCH` | **0.90 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **45.9 ms** | 109.9 ms | `DIRECT_AGENT_SEARCH` ✅ | Direct concert/event title lookup with no filters |
+| 6 | `Zakir Khan show` | `DIRECT_AGENT_SEARCH` | **0.84 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **44.3 ms** | 97.4 ms | `DIRECT_AGENT_SEARCH` ✅ | Direct artist show lookup with no city or date filter |
+| 7 | `Arijit Singh` | `DIRECT_AGENT_SEARCH` | **0.82 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **44.6 ms** | 72.8 ms | `DIRECT_AGENT_SEARCH` ✅ | Direct artist name lookup |
+| 8 | `Diljit Dosanjh Dil-Luminati` | `DIRECT_AGENT_SEARCH` | **0.92 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **45.6 ms** | 74.1 ms | `DIRECT_AGENT_SEARCH` ✅ | Direct artist and tour name lookup |
+| 9 | `Sunburn Arena` | `DIRECT_AGENT_SEARCH` | **0.83 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **43.7 ms** | 96.2 ms | `DIRECT_AGENT_SEARCH` ✅ | Direct event/concert name lookup with no city or date filter |
+| 10 | `Prithvi Theatre` | `DIRECT_AGENT_SEARCH` | **0.84 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **43.7 ms** | 72.2 ms | `DIRECT_AGENT_SEARCH` ✅ | Direct theatre venue name lookup |
+| 11 | `Nita Mukesh Ambani Cultural Centre` | `DIRECT_AGENT_SEARCH` | **0.91 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **45.3 ms** | 110.0 ms | `DIRECT_AGENT_SEARCH` ✅ | Standalone venue or bank offer lookup with no facet filters |
+| 12 | `ICICI credit card movie offer` | `DIRECT_AGENT_SEARCH` | **0.89 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **45.0 ms** | 118.4 ms | `DIRECT_AGENT_SEARCH` ✅ | Bank or card offer lookup with no facet filters |
+| 13 | `HDFC bank Buy 1 Get 1 offer` | `DIRECT_AGENT_SEARCH` | **0.88 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **45.8 ms** | 115.3 ms | `DIRECT_AGENT_SEARCH` ✅ | Direct bank/card offer lookup with no facet filters |
+| 14 | `Gladiator II` | `DIRECT_AGENT_SEARCH` | **0.81 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **43.5 ms** | 88.2 ms | `DIRECT_AGENT_SEARCH` ✅ | Direct movie title lookup with no facet filters |
+| 15 | `Kantara` | `DIRECT_AGENT_SEARCH` | **0.80 ms** ✅ | `DIRECT_AGENT_SEARCH` ✅ | **43.7 ms** | 71.9 ms | `DIRECT_AGENT_SEARCH` ✅ | Direct movie title lookup |
+| 16 | `IMAX 3D movies in Mumbai` | `CALL_LLM_INTENT` | **0.86 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.0 ms** | 122.9 ms | `CALL_LLM_INTENT` ✅ | Has format (IMAX 3D) and city (Mumbai) |
+| 17 | `hindi horror movie in imax this friday in pune` | `CALL_LLM_INTENT` | **0.91 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 147.1 ms | `CALL_LLM_INTENT` ✅ | Has language (Hindi), genre (horror), format (IMAX), date (this Friday), and city (Pune) |
+| 18 | `concerts between 1000 and 3000 in delhi` | `CALL_LLM_INTENT` | **0.87 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 164.2 ms | `CALL_LLM_INTENT` ✅ | Has category (concerts), price range (1000-3000), and city (Delhi) |
+| 19 | `standup comedy in koramangala tonight` | `CALL_LLM_INTENT` | **0.89 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.0 ms** | 146.8 ms | `CALL_LLM_INTENT` ✅ | Has location (Koramangala), date (tonight), and activity (standup comedy) |
+| 20 | `couple garba passes in ahmedabad under 1500` | `CALL_LLM_INTENT` | **0.90 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.3 ms** | 131.7 ms | `CALL_LLM_INTENT` ✅ | Has price (under 1500) and location (Ahmedabad) |
+| 21 | `cinemas near phoenix marketcity whitefield` | `CALL_LLM_INTENT` | **0.88 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 134.8 ms | `CALL_LLM_INTENT` ✅ | Has location (Phoenix Marketcity, Whitefield) and cinema type (cinemas) |
+| 22 | `funny movie without any horror` | `CALL_LLM_INTENT` | **0.85 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 117.5 ms | `CALL_LLM_INTENT` ✅ | Has genre (Comedy) and negative genre exclusion (without horror) |
+| 23 | `something after 9 pm near hitec city that isnt a movie` | `CALL_LLM_INTENT` | **0.94 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.2 ms** | 151.8 ms | `CALL_LLM_INTENT` ✅ | Has location (hitec city), time (after 9 pm), and exclusion (not a movie) |
+| 24 | `malayalam movies with english subtitles` | `CALL_LLM_INTENT` | **0.87 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.2 ms** | 118.4 ms | `CALL_LLM_INTENT` ✅ | Has language (Malayalam) and subtitle format (English subtitles) |
+| 25 | `recliner seats movie in gurgaon tomorrow evening` | `CALL_LLM_INTENT` | **0.90 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.0 ms** | 139.3 ms | `CALL_LLM_INTENT` ✅ | Has format (recliner seats), location (Gurgaon), and date (tomorrow evening) |
+| 26 | `kids magic show this weekend in chennai under 500` | `CALL_LLM_INTENT` | **0.92 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 143.6 ms | `CALL_LLM_INTENT` ✅ | Has date (this weekend), location (Chennai), and price (under 500) |
+| 27 | `telugu action movie in 4dx this saturday in hyderabad` | `CALL_LLM_INTENT` | **0.93 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 127.6 ms | `CALL_LLM_INTENT` ✅ | Has genre (Action), date (this Saturday), and location (Hyderabad) |
+| 28 | `late night movie shows in andheri tonight` | `CALL_LLM_INTENT` | **0.88 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 130.7 ms | `CALL_LLM_INTENT` ✅ | Has format (late night), city (Andheri), and date (Tonight) |
+| 29 | `plays in kolkata this sunday` | `CALL_LLM_INTENT` | **0.86 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.1 ms** | 118.7 ms | `CALL_LLM_INTENT` ✅ | Has date (this sunday) and location (Kolkata) |
+| 30 | `free workshops in bangalore this weekend` | `CALL_LLM_INTENT` | **0.89 ms** ✅ | `CALL_LLM_INTENT` ✅ | **53.3 ms** | 134.1 ms | `CALL_LLM_INTENT` ✅ | Has category (workshops), location (Bangalore), and date (this weekend) |
 
 ---
 

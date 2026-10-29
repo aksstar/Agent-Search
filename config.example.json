@@ -32,5 +32,13 @@
   "legacy_v2_sold_out_field": "is_sold_out",
   "crowding_field": "entity_code",
   "legacy_v2_regions_field": "active_regions",
-  "legacy_v2_show_dates_field": "event_dates"
+  "legacy_v2_show_dates_field": "event_dates",
+  "vertex_gemma_router_project_id": "your-gcp-project-id",
+  "vertex_gemma_router_project_number": "000000000000",
+  "vertex_gemma_router_region": "asia-south1",
+  "vertex_gemma_router_endpoint_id": "5229789674121199616",
+  "vertex_gemma_router_model_id": "7622425932208275456",
+  "vertex_setfit_router_endpoint_id": "1848149303919378432",
+  "vertex_setfit_router_model_id": "3819136046893891584",
+  "cloud_run_api_url": "https://your-cloud-run-api-url.a.run.app"
 }

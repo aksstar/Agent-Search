@@ -75,6 +75,7 @@ SEARCH_STUDIO_PY_FILES = (
     "router_api.py",
     "search_service.py",
     "server.py",
+    "setfit_minilm_router_weights.npz",
 )
 
 
@@ -99,7 +100,7 @@ def build_source_tarball() -> bytes:
 
 
 def upload_tarball_to_gcs(client: EcpClient, tar_bytes: bytes) -> None:
-    """Upload the Cloud Build source tarball to GCS over mTLS."""
+    """Upload the Cloud Build source tarball and SetFit-MiniLM weights artifact to GCS over mTLS."""
     print(f"1. Uploading source tarball ({len(tar_bytes):,} bytes) to gs://{SOURCE_BUCKET}/{SOURCE_OBJECT}...", flush=True)
     client._refresh_token()
     encoded_obj = quote(SOURCE_OBJECT, safe="")
@@ -113,6 +114,14 @@ def upload_tarball_to_gcs(client: EcpClient, tar_bytes: bytes) -> None:
     resp = requests.post(url, headers=headers, data=tar_bytes, timeout=60)
     if resp.status_code not in (200, 201):
         raise RuntimeError(f"GCS tarball upload failed ({resp.status_code}): {resp.text[:400]}")
+
+    weights_path = ROOT_DIR / "search_studio" / "setfit_minilm_router_weights.npz"
+    if weights_path.exists():
+        w_obj = quote("models/setfit_minilm_router/setfit_minilm_router_weights.npz", safe="")
+        w_url = f"http://127.0.0.1:{client.port}/upload/storage/v1/b/{SOURCE_BUCKET}/o?uploadType=media&name={w_obj}"
+        w_headers = dict(headers, **{"Content-Type": "application/octet-stream"})
+        requests.post(w_url, headers=w_headers, data=weights_path.read_bytes(), timeout=60)
+        print(f"   Uploaded SetFit-MiniLM weights to gs://{SOURCE_BUCKET}/models/setfit_minilm_router/setfit_minilm_router_weights.npz", flush=True)
     print("   Uploaded source tarball cleanly.", flush=True)
 
 

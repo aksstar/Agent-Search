@@ -3,3 +3,8 @@ uvicorn[standard]>=0.32.0
 orjson>=3.10.0
 requests>=2.32.0
 google-auth>=2.35.0
+onnxruntime>=1.19.0
+tokenizers>=0.20.0
+numpy>=1.26.0
+huggingface-hub>=0.25.0
+
