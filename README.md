@@ -224,19 +224,21 @@ flowchart TB
 
 ---
 
-### 2.4 Gemma 3 Router LLM Latency Benchmark (`/api/route_decision`)
+### 2.4 Decision Router API Latency Benchmark (`/api/route_decision`: Local Gemma 3 vs. Cloud `gemini-3.5-flash-lite` in `asia-south1`)
 
-Live benchmark across **30 uncached queries** (`use_cache=false`: 15 direct entity/title/offer lookups + 15 multi-constraint filter/boost queries) on Apple Metal GPU (`mlx-lm` with the pre-warmed **367-token** Router KV cache in [`search_studio/router_api.py`](./search_studio/router_api.py)):
+Live benchmark across **30 uncached queries** (`use_cache=false`: 15 direct entity/title/offer lookups + 15 multi-constraint filter/boost queries) comparing **Local Apple Metal GPU (`mlx-lm` with pre-warmed 367-token KV cache)** against **Cloud Vertex AI `gemini-3.5-flash-lite` (`asia-south1`, `thinkingBudget: 0`, HTTP keep-alive)** in [`search_studio/router_api.py`](./search_studio/router_api.py):
 
-| Configuration | Tokens Generated | Min | Mean | P50 (Median) | P90 | P95 | Max | HTTP P50 | `CALL_LLM_INTENT` Recall | Total Accuracy |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Gemma 3 1B (`include_reason=false`)** *(Production Fast Gate)* | ~6 toks | **43.5 ms** | **49.9 ms** | **53.1 ms** | **54.0 ms** | **54.1 ms** | **54.3 ms** | **54.2 ms** | **15/15 (100%)** | **27/30 (90.0%)** |
-| **Gemma 3 1B (`include_reason=true`)** *(UI Explain Mode)* | ~22 toks | **71.9 ms** | **114.4 ms** | **118.4 ms** | **146.8 ms** | **149.7 ms** | **164.2 ms** | **119.5 ms** | **15/15 (100%)** | **27/30 (90.0%)** |
-| **Gemma 3 270M (`include_reason=false`)** | ~6 toks | **20.4 ms** | **36.6 ms** | **24.3 ms** | **25.5 ms** | **31.3 ms** | 387.0 ms | **25.3 ms** | 15/15 (100%) | 16/30 (53.3%) |
-| **Gemma 3 270M (`include_reason=true`)** | ~22 toks | **39.8 ms** | **54.1 ms** | **53.2 ms** | **62.4 ms** | **66.5 ms** | **78.3 ms** | **54.3 ms** | 15/15 (100%) | 16/30 (53.3%) |
-| **Warm LRU Cache Hit (`use_cache=true`)** | 0 toks | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.8 ms** | **15/15 (100%)** | **27/30 (90.0%)** |
+| Router Configuration | Execution Target | Tokens Generated | Min | Mean | P50 (Median) | P90 | P95 | Max | Speedup vs. Cloud `P50` | `CALL_LLM_INTENT` Recall | Total Accuracy |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Local Gemma 3 1B (`include_reason=false`)** *(Production Fast Gate)* | Local Metal GPU (`mlx-lm`) | ~6 toks | **43.5 ms** | **49.9 ms** | **53.1 ms** | **54.0 ms** | **54.1 ms** | **54.3 ms** | **`19.6x` faster** | **15/15 (100%)** | **27/30 (90.0%)** |
+| **Local Gemma 3 1B (`include_reason=true`)** *(UI Explain Mode)* | Local Metal GPU (`mlx-lm`) | ~22 toks | **71.9 ms** | **114.4 ms** | **118.4 ms** | **146.8 ms** | **149.7 ms** | **164.2 ms** | **`9.8x` faster** | **15/15 (100%)** | **27/30 (90.0%)** |
+| **Local Gemma 3 270M (`include_reason=false`)** | Local Metal GPU (`mlx-lm`) | ~6 toks | **20.4 ms** | **36.6 ms** | **24.3 ms** | **25.5 ms** | **31.3 ms** | 387.0 ms | **`42.9x` faster** | 15/15 (100%) | 16/30 (53.3%) |
+| **Local Gemma 3 270M (`include_reason=true`)** | Local Metal GPU (`mlx-lm`) | ~22 toks | **39.8 ms** | **54.1 ms** | **53.2 ms** | **62.4 ms** | **66.5 ms** | **78.3 ms** | **`21.8x` faster** | 15/15 (100%) | 16/30 (53.3%) |
+| **Cloud `gemini-3.5-flash-lite` (`include_reason=false`)** | Vertex AI (`asia-south1`) | ~8 toks | 548.3 ms | 1097.0 ms | **1043.2 ms** | 1396.2 ms | 1427.4 ms | 2482.7 ms | `1.0x` (baseline) | **15/15 (100%)** | **30/30 (100%)** |
+| **Cloud `gemini-3.5-flash-lite` (`include_reason=true`)** | Vertex AI (`asia-south1`) | ~25 toks | 716.3 ms | 1253.1 ms | **1159.2 ms** | 1533.1 ms | 1588.9 ms | 2513.2 ms | `1.0x` (baseline) | **15/15 (100%)** | **30/30 (100%)** |
+| **Warm LRU Cache Hit (`use_cache=true`)** | In-Memory (`_ROUTER_DECISION_CACHE`) | 0 toks | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **Instant (`~0.8 ms` HTTP)** | **15/15 (100%)** | **27–30/30** |
 
-> **Full 30-Query Breakdown**: See [Section 4.3 of `search_studio/README.md`](./search_studio/README.md#43-per-query-breakdown-localgemma-3-1b-it-qat-4bit) for the per-query latencies and generated router reasons.
+> **Full 30-Query Breakdown**: See [Section 4.3 of `search_studio/README.md`](./search_studio/README.md#43-per-query-breakdown-local-gemma-3-1b-vs-cloud-gemini-35-flash-lite-asia-south1) for the per-query latencies and generated router reasons.
 
 ---
 

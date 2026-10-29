@@ -25,6 +25,7 @@ from search_studio.prompts import (
     build_gemma_router_chat_messages,
 )
 from search_studio.router_api import (
+    decide_query_route_cloud_gemini,
     decide_query_route_gemma3,
     handle_route_decision_request,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "build_explain_hit_prompt",
     "build_gemma_chat_messages",
     "build_gemma_router_chat_messages",
+    "decide_query_route_cloud_gemini",
     "decide_query_route_gemma3",
     "explain_live_hit",
     "extract_boosts_cloud_gemini",

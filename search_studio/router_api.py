@@ -15,6 +15,7 @@ import time
 from typing import Any, Dict
 
 from search_studio.client import (
+    CLOUD_GEMINI_MODELS,
     HAS_MLX,
     LOCAL_MODELS,
     _MAX_NLU_CACHE,
@@ -22,10 +23,13 @@ from search_studio.client import (
     _MLX_ROUTER_RUNTIMES,
     _NLU_CACHE_LOCK,
     _ROUTER_DECISION_CACHE,
+    ecp_post,
 )
 from search_studio.intent_extractor import (
     _extract_first_json_object,
+    extract_non_thought_json_text,
     get_or_init_local_mlx_runtime,
+    resolve_gemini_endpoint_and_config,
 )
 from search_studio.prompts import build_gemma_router_chat_messages
 
@@ -34,6 +38,25 @@ if HAS_MLX:
     from mlx_lm import stream_generate as mlx_stream_generate
     from mlx_lm.models.cache import make_prompt_cache
     from mlx_lm.sample_utils import make_sampler
+
+ROUTER_CLOUD_SYSTEM_INSTRUCTION = (
+    "You are the Entertainment Search Query Router.\n"
+    "Classify whether the user query should go directly to Vertex AI Agent Search (`DIRECT_AGENT_SEARCH`) "
+    "or call the LLM Intent/Boost Extractor first (`CALL_LLM_INTENT`).\n"
+    "- `DIRECT_AGENT_SEARCH`: Pure movie/show/event title, artist/actor/comedian name, theatre/venue name, "
+    "or bank/card offer lookup with ZERO city, locality, price, date, time-of-day, format, language, genre, "
+    "category, or negation filters.\n"
+    "- `CALL_LLM_INTENT`: Query contains ANY city/locality/near me, price/under/between/free/cheapest, "
+    "date/time/today/tonight/tomorrow/friday/weekend/late night, format (IMAX/4DX/3D/Dolby/recliner), "
+    "language, genre/category, negation (without/not), or occasion.\n\n"
+    "Examples:\n"
+    'Query: Spider-Man: No Way Home -> {"route":"DIRECT_AGENT_SEARCH","reason":"Direct movie title lookup with no facet filters"}\n'
+    'Query: Zakir Khan show -> {"route":"DIRECT_AGENT_SEARCH","reason":"Direct artist show lookup with no city or date filter"}\n'
+    'Query: IMAX 3D movies in Mumbai -> {"route":"CALL_LLM_INTENT","reason":"Has format (IMAX 3D) and city (Mumbai) filters"}\n'
+    'Query: concerts between 1000 and 3000 in delhi -> {"route":"CALL_LLM_INTENT","reason":"Has category (concerts), price range (1000-3000), and city (Delhi)"}\n'
+    'Query: funny movie without any horror -> {"route":"CALL_LLM_INTENT","reason":"Has genre (Comedy) and negative genre exclusion (without horror)"}'
+)
+
 
 def get_or_init_local_mlx_router_runtime(
     model_key: str = "local:gemma-3-1b-it-qat-4bit",
@@ -89,19 +112,123 @@ def get_or_init_local_mlx_router_runtime(
     return router_rt
 
 
+def decide_query_route_cloud_gemini(
+    query: str,
+    model_name: str = "gemini-3.5-flash-lite",
+    use_cache: bool = False,
+    include_reason: bool = True,
+) -> Dict[str, Any]:
+    """Use Cloud Vertex AI Gemini (`gemini-3.5-flash-lite` in `asia-south1`) to classify
+    whether `query` should go directly to Agent Search (`DIRECT_AGENT_SEARCH`) or call
+    the LLM Intent Extractor (`CALL_LLM_INTENT`).
+    """
+    q_clean = str(query or "").strip()
+    if not q_clean:
+        raise ValueError("Query must not be empty.")
+
+    resolved_model, gemini_region, gemini_host, gemini_path, gen_cfg = resolve_gemini_endpoint_and_config(
+        model_name, max_tokens_default=96 if include_reason else 32, temperature=0.0
+    )
+    cache_key = f"router::{resolved_model}::{include_reason}::{q_clean.lower()}"
+    if use_cache:
+        with _NLU_CACHE_LOCK:
+            if cache_key in _ROUTER_DECISION_CACHE:
+                cached = dict(_ROUTER_DECISION_CACHE[cache_key])
+                cached["router_latency_ms"] = 0.0
+                cached["cached"] = True
+                return cached
+
+    if include_reason:
+        gen_cfg["responseSchema"] = {
+            "type": "OBJECT",
+            "properties": {
+                "route": {"type": "STRING", "enum": ["DIRECT_AGENT_SEARCH", "CALL_LLM_INTENT"]},
+                "reason": {"type": "STRING"},
+            },
+            "required": ["route", "reason"],
+        }
+    else:
+        gen_cfg["responseSchema"] = {
+            "type": "OBJECT",
+            "properties": {
+                "route": {"type": "STRING", "enum": ["DIRECT_AGENT_SEARCH", "CALL_LLM_INTENT"]},
+            },
+            "required": ["route"],
+        }
+
+    body = {
+        "systemInstruction": {"parts": [{"text": ROUTER_CLOUD_SYSTEM_INSTRUCTION}]},
+        "contents": [{"role": "user", "parts": [{"text": f"Query: {q_clean}"}]}],
+        "generationConfig": gen_cfg,
+    }
+
+    t0 = time.perf_counter()
+    resp = ecp_post(gemini_host, gemini_path, body)
+    elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 1)
+
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"{resolved_model} ({gemini_region}) router returned HTTP {resp.status_code}: {resp.text[:400]}"
+        )
+
+    raw_txt = extract_non_thought_json_text(resp.json())
+    parsed = _extract_first_json_object(raw_txt)
+
+    route_str = str(parsed.get("route") or "CALL_LLM_INTENT").strip().upper()
+    if "DIRECT" in route_str:
+        route_str = "DIRECT_AGENT_SEARCH"
+        call_llm = False
+    else:
+        route_str = "CALL_LLM_INTENT"
+        call_llm = True
+
+    reason_str = str(
+        parsed.get("reason")
+        or ("Requires structured filter/boost extraction" if call_llm else "Direct entity lookup")
+    ).strip()
+
+    decision = {
+        "status": "OK",
+        "query": q_clean,
+        "call_llm_for_intent": call_llm,
+        "route": route_str,
+        "recommended_nlu_mode": "llm_boost" if call_llm else "vertex_native",
+        "reason": reason_str,
+        "router_model": resolved_model,
+        "router_display_model": f"{resolved_model} (Vertex Cloud • {gemini_region})",
+        "router_latency_ms": elapsed_ms,
+        "cached": False,
+    }
+
+    with _NLU_CACHE_LOCK:
+        _ROUTER_DECISION_CACHE[cache_key] = dict(decision)
+        while len(_ROUTER_DECISION_CACHE) > _MAX_NLU_CACHE:
+            _ROUTER_DECISION_CACHE.popitem(last=False)
+
+    return decision
+
+
 def decide_query_route_gemma3(
     query: str,
     model_key: str = "local:gemma-3-1b-it-qat-4bit",
     use_cache: bool = False,
     include_reason: bool = True,
 ) -> Dict[str, Any]:
-    """Use Local Gemma 3 on Apple Metal GPU to decide whether `query` should call the
-    LLM Intent/Boost Extractor (`CALL_LLM_INTENT`, `call_llm_for_intent=True`) or go
-    directly to Agent Search (`DIRECT_AGENT_SEARCH`, `call_llm_for_intent=False`).
+    """Use Local Gemma 3 on Apple Metal GPU (or Cloud Gemini if a cloud model key is passed)
+    to decide whether `query` should call the LLM Intent/Boost Extractor (`CALL_LLM_INTENT`,
+    `call_llm_for_intent=True`) or go directly to Agent Search (`DIRECT_AGENT_SEARCH`,
+    `call_llm_for_intent=False`).
     """
     q_clean = str(query or "").strip()
     if not q_clean:
         raise ValueError("Query must not be empty.")
+    if model_key in CLOUD_GEMINI_MODELS or model_key.startswith("gemini-"):
+        return decide_query_route_cloud_gemini(
+            query=q_clean,
+            model_name=model_key,
+            use_cache=use_cache,
+            include_reason=include_reason,
+        )
     if model_key not in LOCAL_MODELS:
         model_key = "local:gemma-3-1b-it-qat-4bit"
 
@@ -184,10 +311,8 @@ def decide_query_route_gemma3(
     return decision
 
 
-
-
 def handle_route_decision_request(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle `GET /api/route_decision` or `POST /api/route_decision` powered by local Gemma 3 (`mlx-lm`)."""
+    """Handle `GET /api/route_decision` or `POST /api/route_decision` powered by local Gemma 3 (`mlx-lm`) or Cloud Gemini."""
     query = str(params.get("query") or "").strip()
     if not query:
         raise ValueError("Missing required parameter 'query'.")
@@ -213,3 +338,4 @@ def handle_route_decision_request(params: Dict[str, Any]) -> Dict[str, Any]:
         decision = dict(decision)
         decision["search_result"] = run_live_search(search_params)
     return decision
+
