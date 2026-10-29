@@ -28,6 +28,7 @@ This repository provides:
 13. [`filter` vs. `boostSpec` (`conditionBoostSpecs`) in the Agent Search API](#13-filter-vs-boostspec-conditionboostspecs-in-the-agent-search-api)
 14. [How `boostSpec` Numbers Are Calibrated (4-Tier Scoring Hierarchy)](#14-how-boostspec-numbers-are-calibrated-4-tier-scoring-hierarchy)
 15. [135-Query Live Top-10 Evaluation Summary](#15-135-query-live-top-10-evaluation-summary)
+16. [Setting Up & Running the Local Gemma Intent Extraction Model](#16-setting-up--running-the-local-gemma-intent-extraction-model)
 
 ---
 
@@ -942,4 +943,81 @@ Full evaluation details across all 135 queries and 12 categories are documented 
    - Movie queries without an explicit release window automatically boost `release_date >= "2026-07-01T00:00:00Z"` (`+0.85`), and event queries without an explicit date automatically boost `event_dates >= "2026-10-12T00:00:00Z"` (`+0.85`), preventing expired 1991–2025 archive records from outranking live 2026 inventory.
 4. **Full Top-10 Multi-Constraint Re-Ranking (`validate_and_rerank_candidates`)**:
    - Sorts all 10 candidates by `(req_type_ok, title_entity_match, artist_entity_match, zero_violations, type_ok, neg_genre_ok, is_active, city_match, lang_match, fmt_match, genre_match, -original_rank)` in `<0.1 ms` so out-of-city, archived/TVOD, or wrong-language items never rank above compliant candidates anywhere in Top-10.
+
+---
+
+## 16. Setting Up & Running the Local Gemma Intent Extraction Model
+
+The Gemma intent extraction model runs locally on **Apple Silicon (Metal GPU)** using `mlx-lm` with a pre-warmed **404-token** KV cache.
+
+### 16.1 Environment & Dependencies
+
+Create a Python virtual environment on an Apple Silicon Mac (M1–M4) and install `mlx`, `mlx-lm`, and `requests`:
+
+```bash
+python3 -m venv .venv
+./.venv/bin/pip install mlx mlx-lm requests
+```
+
+> **Note:** All quantized models are pulled automatically from public `mlx-community/*` repositories on Hugging Face on first run (cached in `~/.cache/huggingface/hub/`), so no Hugging Face authentication token is required.
+
+### 16.2 Supported Local Gemma Models
+
+Configured in [`LOCAL_MODELS`](./search_studio/client.py) inside [`search_studio/client.py`](./search_studio/client.py):
+
+| Model Key | Hugging Face Repo | Purpose & Latency |
+| :--- | :--- | :--- |
+| `local:gemma-3-1b-it-qat-4bit` *(Default)* | `mlx-community/gemma-3-1b-it-qat-4bit` | **Recommended**: ~97 ms intent extraction (97.0% Top-1 accuracy) + ~50 ms query router |
+| `local:gemma-3-270m-it-qat-4bit` | `mlx-community/gemma-3-270m-it-qat-4bit` | Ultra-lightweight (~55 ms intent extraction) |
+| `local:gemma-3-4b-it-qat-4bit` | `mlx-community/gemma-3-4b-it-qat-4bit` | Larger 4B model for complex semantic queries |
+| `local:gemma-4-e2b-it-4bit` | `mlx-community/gemma-4-e2b-it-4bit` | Gemma 4 E2B 4-bit variant |
+
+### 16.3 Option A — Run via Search Studio Web Server (Auto Pre-Warms KV Cache)
+
+Starting [`realtime_test_webapp.py`](./realtime_test_webapp.py) calls [`main()`](./search_studio/server.py), which loads `gemma-3-1b-it-qat-4bit` onto the Metal GPU and pre-warms both the **404-token Intent KV cache** and the **367-token Router KV cache**:
+
+```bash
+./.venv/bin/python realtime_test_webapp.py
+```
+
+Then open **`http://127.0.0.1:8080`** or query the REST API directly:
+
+```bash
+curl -s -X POST "http://127.0.0.1:8080/api/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "hindi horror movie in imax this friday in pune",
+    "nlu_mode": "llm_boost",
+    "boost_model": "local:gemma-3-1b-it-qat-4bit",
+    "search_app": "v3"
+  }' | jq '{parse_ms: .nlu_latency_ms, slots: .llm_raw, rewritten_query: .rewritten_query, boost_specs: .boost_specs}'
+```
+
+### 16.4 Option B — Call Gemma Intent Extraction Directly in Python
+
+Invoke [`extract_boosts_local_mlx()`](./search_studio/intent_extractor.py) (or the unified [`extract_boosts_llm()`](./search_studio/intent_extractor.py)) from [`search_studio/intent_extractor.py`](./search_studio/intent_extractor.py):
+
+```python
+import json
+from search_studio.intent_extractor import extract_boosts_local_mlx
+
+# 1st call loads weights & pre-warmed 404-token KV cache; subsequent calls take ~97 ms
+res = extract_boosts_local_mlx(
+    query="concerts between 1000 and 3000 in delhi",
+    model_key="local:gemma-3-1b-it-qat-4bit",
+    app_key="v3",
+    use_cache=False,
+)
+
+print("Latency (ms):", res["parse_ms"])
+print("Extracted Slots:", json.dumps(res["llm_raw"], indent=2))
+print("Rewritten Query:", res["rewritten_query"])
+print("Compiled Boost Specs:", json.dumps(res["boost_specs"], indent=2))
+```
+
+### 16.5 Key Files to Customize
+
+1. **Prompt & Few-Shot Examples (~404 tokens):** [`build_gemma_chat_messages()`](./search_studio/prompts.py) in [`search_studio/prompts.py`](./search_studio/prompts.py) — keep this under **450 tokens** so the prompt + query + generated JSON stay inside Gemma 3's **512-token sliding attention window (`RotatingKVCache`)**.
+2. **KV Cache Pre-Warming & Streaming:** [`get_or_init_local_mlx_runtime()`](./search_studio/intent_extractor.py) and [`_stream_first_json_object_mlx()`](./search_studio/intent_extractor.py) in [`search_studio/intent_extractor.py`](./search_studio/intent_extractor.py).
+3. **Slot $\rightarrow$ `conditionBoostSpecs` Compiler:** [`serialize_llm_slots_to_boost_specs()`](./search_studio/compiler.py) in [`search_studio/compiler.py`](./search_studio/compiler.py) and city/format/genre lookups in [`search_studio/taxonomy.py`](./search_studio/taxonomy.py).
 

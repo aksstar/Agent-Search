@@ -274,4 +274,79 @@ In `search_studio/`, the **LLM** ([`intent_extractor.py`](./intent_extractor.py)
 | **3. Exact Case-Sensitive BigQuery Values & Typos** | Vertex AI Agent Search `ANY("...")` is **100% exact-match**. An LLM naturally outputs `"Romance"` (0 rows in BQ, which uses `"Romantic"`), `"Bangalore"` (0 rows in BQ, which uses `"Bengaluru"`), `"Vizag"` (BQ uses `"Vizag (Visakhapatnam)"`), or `"Acoustic"` (missing the 379 `"Accoustic"` rows). | `taxonomy.py` deterministically maps every LLM output to the exact string(s) verified in BigQuery, preventing silent 0-match boosts. |
 | **4. Multi-Schema Support (`v2` vs. `v3`) from One LLM Call** | `v2` uses nested hyphenated formats (`sessions.format: ANY("IMAX-2D")`) while `v3` uses flat space-separated formats (`formats: ANY("IMAX 2D")`). A single LLM prompt would have to know which engine is being called and its exact schema quirks. | The LLM emits schema-agnostic JSON (`"fmt": "IMAX"`), and `taxonomy.py` compiles the exact `v2` or `v3` `conditionBoostSpecs` on the fly. |
 
+---
 
+## 6. Setting Up & Running the Local Gemma Intent Extraction Model
+
+The Gemma intent extraction model runs locally on **Apple Silicon (Metal GPU)** using `mlx-lm` with a pre-warmed **404-token** KV cache.
+
+### 6.1 Environment & Dependencies
+
+Create a Python virtual environment on an Apple Silicon Mac (M1–M4) and install `mlx`, `mlx-lm`, and `requests`:
+
+```bash
+python3 -m venv .venv
+./.venv/bin/pip install mlx mlx-lm requests
+```
+
+> **Note:** All quantized models are pulled automatically from public `mlx-community/*` repositories on Hugging Face on first run (cached in `~/.cache/huggingface/hub/`), so no Hugging Face authentication token is required.
+
+### 6.2 Supported Local Gemma Models
+
+Configured in [`LOCAL_MODELS`](./client.py) inside [`search_studio/client.py`](./client.py):
+
+| Model Key | Hugging Face Repo | Purpose & Latency |
+| :--- | :--- | :--- |
+| `local:gemma-3-1b-it-qat-4bit` *(Default)* | `mlx-community/gemma-3-1b-it-qat-4bit` | **Recommended**: ~97 ms intent extraction (97.0% Top-1 accuracy) + ~50 ms query router |
+| `local:gemma-3-270m-it-qat-4bit` | `mlx-community/gemma-3-270m-it-qat-4bit` | Ultra-lightweight (~55 ms intent extraction) |
+| `local:gemma-3-4b-it-qat-4bit` | `mlx-community/gemma-3-4b-it-qat-4bit` | Larger 4B model for complex semantic queries |
+| `local:gemma-4-e2b-it-4bit` | `mlx-community/gemma-4-e2b-it-4bit` | Gemma 4 E2B 4-bit variant |
+
+### 6.3 Option A — Run via Search Studio Web Server (Auto Pre-Warms KV Cache)
+
+Starting [`realtime_test_webapp.py`](../realtime_test_webapp.py) calls [`main()`](./server.py), which loads `gemma-3-1b-it-qat-4bit` onto the Metal GPU and pre-warms both the **404-token Intent KV cache** and the **367-token Router KV cache**:
+
+```bash
+./.venv/bin/python realtime_test_webapp.py
+```
+
+Then open **`http://127.0.0.1:8080`** or query the REST API directly:
+
+```bash
+curl -s -X POST "http://127.0.0.1:8080/api/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "hindi horror movie in imax this friday in pune",
+    "nlu_mode": "llm_boost",
+    "boost_model": "local:gemma-3-1b-it-qat-4bit",
+    "search_app": "v3"
+  }' | jq '{parse_ms: .nlu_latency_ms, slots: .llm_raw, rewritten_query: .rewritten_query, boost_specs: .boost_specs}'
+```
+
+### 6.4 Option B — Call Gemma Intent Extraction Directly in Python
+
+Invoke [`extract_boosts_local_mlx()`](./intent_extractor.py) (or the unified [`extract_boosts_llm()`](./intent_extractor.py)) from [`search_studio/intent_extractor.py`](./intent_extractor.py):
+
+```python
+import json
+from search_studio.intent_extractor import extract_boosts_local_mlx
+
+# 1st call loads weights & pre-warms the 404-token KV cache; subsequent calls take ~97 ms
+res = extract_boosts_local_mlx(
+    query="concerts between 1000 and 3000 in delhi",
+    model_key="local:gemma-3-1b-it-qat-4bit",
+    app_key="v3",
+    use_cache=False,
+)
+
+print("Latency (ms):", res["parse_ms"])
+print("Extracted Slots:", json.dumps(res["llm_raw"], indent=2))
+print("Rewritten Query:", res["rewritten_query"])
+print("Compiled Boost Specs:", json.dumps(res["boost_specs"], indent=2))
+```
+
+### 6.5 Key Files to Customize
+
+1. **Prompt & Few-Shot Examples (~404 tokens):** [`build_gemma_chat_messages()`](./prompts.py) in [`search_studio/prompts.py`](./prompts.py) — keep this under **450 tokens** so the prompt + query + generated JSON stay inside Gemma 3's **512-token sliding attention window (`RotatingKVCache`)**.
+2. **KV Cache Pre-Warming & Streaming:** [`get_or_init_local_mlx_runtime()`](./intent_extractor.py) and [`_stream_first_json_object_mlx()`](./intent_extractor.py) in [`search_studio/intent_extractor.py`](./intent_extractor.py).
+3. **Slot $\rightarrow$ `conditionBoostSpecs` Compiler:** [`serialize_llm_slots_to_boost_specs()`](./compiler.py) in [`search_studio/compiler.py`](./compiler.py) and city/format/genre lookups in [`search_studio/taxonomy.py`](./taxonomy.py).

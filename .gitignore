@@ -19,3 +19,4 @@ eval_5stores_nlp_collapse_html.py
 setup_5stores_bq_and_vertex.py
 setup_5stores_master_v3_global.py
 create_5stores_unified_v2.py
+create_5stores_master_v4.py
