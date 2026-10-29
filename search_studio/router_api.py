@@ -142,7 +142,7 @@ def get_or_init_local_mlx_router_runtime(
 
 def decide_query_route_vertex_vllm(
     query: str,
-    model_key: str = "vertex:gemma-3-270m-it",
+    model_key: str = "vertex:gemma-3-1b-it",
     endpoint_id: str = "",
     region: str = VERTEX_GEMMA_ROUTER_REGION,
     project_id: str = VERTEX_GEMMA_ROUTER_PROJECT_ID,
@@ -150,19 +150,17 @@ def decide_query_route_vertex_vllm(
     use_cache: bool = False,
     include_reason: bool = True,
 ) -> Dict[str, Any]:
-    """Use `google/gemma-3-270m-it` or `google/gemma-3-1b-it` deployed on a dedicated Vertex AI
-    Endpoint (`g2-standard-4`, `1x NVIDIA L4` GPU in `asia-south1`) with vLLM `--enable-prefix-caching`
-    to classify whether `query` should go directly to Agent Search (`DIRECT_AGENT_SEARCH`) or call
-    the LLM Intent Extractor (`CALL_LLM_INTENT`).
+    """Use `google/gemma-3-1b-it` deployed on a dedicated Vertex AI Endpoint in `asia-south1`
+    with vLLM to classify whether `query` should go directly to Agent Search (`DIRECT_AGENT_SEARCH`)
+    or call the LLM Intent Extractor (`CALL_LLM_INTENT`).
     """
     q_clean = str(query or "").strip()
     if not q_clean:
         raise ValueError("Query must not be empty.")
 
-    is_1b = "1b" in str(model_key or "").lower()
-    canonical_key = "vertex:gemma-3-1b-it" if is_1b else "vertex:gemma-3-270m-it"
-    hf_name = "google/gemma-3-1b-it" if is_1b else "google/gemma-3-270m-it"
-    resolved_ep = endpoint_id or (VERTEX_GEMMA_1B_ROUTER_ENDPOINT_ID if is_1b else VERTEX_GEMMA_ROUTER_ENDPOINT_ID)
+    canonical_key = "vertex:gemma-3-1b-it"
+    hf_name = "google/gemma-3-1b-it"
+    resolved_ep = endpoint_id or VERTEX_GEMMA_1B_ROUTER_ENDPOINT_ID or VERTEX_GEMMA_ROUTER_ENDPOINT_ID
 
     cache_key = f"router::{canonical_key}::{include_reason}::{q_clean.lower()}"
     if use_cache:
@@ -476,7 +474,7 @@ def handle_route_decision_request(params: Dict[str, Any]) -> Dict[str, Any]:
     query = str(params.get("query") or "").strip()
     if not query:
         raise ValueError("Missing required parameter 'query'.")
-    default_model = "local:gemma-3-1b-it-qat-4bit" if HAS_MLX else "vertex:gemma-3-270m-it"
+    default_model = "local:gemma-3-1b-it-qat-4bit" if HAS_MLX else "vertex:gemma-3-1b-it"
     model_key = str(params.get("model") or params.get("router_model") or default_model).strip()
     use_cache = bool(params.get("use_cache", False))
     raw_inc = params.get("include_reason", True)
