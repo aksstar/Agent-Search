@@ -27,6 +27,7 @@ from search_studio.prompts import (
 from search_studio.router_api import (
     decide_query_route_cloud_gemini,
     decide_query_route_gemma3,
+    decide_query_route_vertex_vllm,
     handle_route_decision_request,
 )
 from search_studio.search_service import (
@@ -48,6 +49,7 @@ __all__ = [
     "build_gemma_router_chat_messages",
     "decide_query_route_cloud_gemini",
     "decide_query_route_gemma3",
+    "decide_query_route_vertex_vllm",
     "explain_live_hit",
     "extract_boosts_cloud_gemini",
     "extract_boosts_llm",

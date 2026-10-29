@@ -399,6 +399,8 @@ def extract_boosts_llm(
     """Dispatch boost extraction to either Local Apple Metal GPU (`mlx-lm`) or Vertex Cloud Gemini."""
     chosen = (model_name or DEFAULT_BOOST_MODEL).strip()
     if chosen in LOCAL_MODELS:
-        return extract_boosts_local_mlx(query, chosen, app_key=app_key, use_cache=use_cache)
+        if HAS_MLX:
+            return extract_boosts_local_mlx(query, chosen, app_key=app_key, use_cache=use_cache)
+        chosen = "gemini-3.5-flash-lite"
     return extract_boosts_cloud_gemini(query, chosen, app_key=app_key, use_cache=use_cache)
 

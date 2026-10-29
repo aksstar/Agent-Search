@@ -134,3 +134,28 @@ LEGACY_V2_REGIONS_FIELD: str = _get(
 LEGACY_V2_SHOW_DATES_FIELD: str = _get(
     "LEGACY_V2_SHOW_DATES_FIELD", "legacy_v2_show_dates_field", "event_dates"
 )
+
+VERTEX_GEMMA_ROUTER_PROJECT_ID: str = _get(
+    "VERTEX_GEMMA_ROUTER_PROJECT_ID", "vertex_gemma_router_project_id", SEARCH_5STORES_PROJECT_ID
+)
+VERTEX_GEMMA_ROUTER_PROJECT_NUMBER: str = _get(
+    "VERTEX_GEMMA_ROUTER_PROJECT_NUMBER", "vertex_gemma_router_project_number", SEARCH_5STORES_PROJECT_NUMBER
+)
+VERTEX_GEMMA_ROUTER_REGION: str = _get(
+    "VERTEX_GEMMA_ROUTER_REGION", "vertex_gemma_router_region", "asia-south1"
+)
+VERTEX_GEMMA_ROUTER_ENDPOINT_ID: str = _get(
+    "VERTEX_GEMMA_ROUTER_ENDPOINT_ID", "vertex_gemma_router_endpoint_id", "6882610737366171648"
+)
+VERTEX_GEMMA_ROUTER_MODEL_ID: str = _get(
+    "VERTEX_GEMMA_ROUTER_MODEL_ID", "vertex_gemma_router_model_id", "4341553603668869120"
+)
+VERTEX_GEMMA_1B_ROUTER_ENDPOINT_ID: str = _get(
+    "VERTEX_GEMMA_1B_ROUTER_ENDPOINT_ID", "vertex_gemma_1b_router_endpoint_id", "3167703994738933760"
+)
+VERTEX_GEMMA_1B_ROUTER_MODEL_ID: str = _get(
+    "VERTEX_GEMMA_1B_ROUTER_MODEL_ID", "vertex_gemma_1b_router_model_id", "2733768536697602048"
+)
+CLOUD_RUN_API_URL: str = _get(
+    "CLOUD_RUN_API_URL", "cloud_run_api_url", ""
+)

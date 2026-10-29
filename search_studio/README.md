@@ -184,29 +184,39 @@ curl -s -X POST "http://127.0.0.1:8080/api/search" \
 
 ---
 
-## 4. Decision Router API Latency Benchmark (`/api/route_decision`: Local Gemma 3 vs. Cloud `gemini-3.5-flash-lite` in `asia-south1`)
+## 4. Decision Router API Latency Benchmark (`/api/route_decision`: Local Gemma 3 vs. Intra-GCP `asia-south1` Vertex AI Gemma 3 & `gemini-3.5-flash-lite`)
 
-Benchmark across **30 uncached queries** (`use_cache=false`: 15 direct entity/title/offer lookups + 15 multi-constraint filter/boost queries) comparing **Local Apple Metal GPU (`mlx-lm` with pre-warmed 367-token KV cache)** against **Cloud Vertex AI `gemini-3.5-flash-lite` (`asia-south1`, `thinkingBudget: 0`, HTTP keep-alive)**:
+Benchmark across **30 uncached queries** (`use_cache=false`: 15 direct entity/title/offer lookups + 15 multi-constraint filter/boost queries) comparing:
+1. **Local Apple Metal GPU (`mlx-lm` with pre-warmed 367-token KV cache)**
+2. **Intra-GCP `asia-south1` (Headless FastAPI + Uvicorn on Cloud Run `asia-south1` $\rightarrow$ Vertex AI Model Garden `google/gemma-3-1b-it` & `google/gemma-3-270m-it` on dedicated `n1-standard-8` + `1x NVIDIA_TESLA_T4` vLLM endpoints in `asia-south1`)**
+3. **Intra-GCP `asia-south1` (Cloud Run `asia-south1` $\rightarrow$ Vertex AI Managed `gemini-3.5-flash-lite` in `asia-south1`)**
+4. **Local Mac $\rightarrow$ Cloud Vertex AI `gemini-3.5-flash-lite` (`asia-south1` over mTLS)**
 
 ### 4.1 Summary Latency Table (Decision API `/api/route_decision` Only)
 
-| Router Configuration | Execution Target | Tokens Generated | Min | Mean | P50 (Median) | P90 | P95 | Max | Speedup vs. Cloud `P50` | `CALL_LLM_INTENT` Recall | Total Accuracy |
+| Router Configuration | Origin $\rightarrow$ Execution Target | Tokens Generated | Min | Mean | P50 (Median) | P90 | P95 | Max | Speedup vs. Cloud `P50` | `CALL_LLM_INTENT` Recall | Total Accuracy |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Local Gemma 3 1B (`include_reason=false`)** *(Production Fast Gate)* | Local Metal GPU (`mlx-lm`) | ~6 toks | **43.5 ms** | **49.9 ms** | **53.1 ms** | **54.0 ms** | **54.1 ms** | **54.3 ms** | **`19.6x` faster** | **15/15 (100%)** | **27/30 (90.0%)** |
-| **Local Gemma 3 1B (`include_reason=true`)** *(UI Explain Mode)* | Local Metal GPU (`mlx-lm`) | ~22 toks | **71.9 ms** | **114.4 ms** | **118.4 ms** | **146.8 ms** | **149.7 ms** | **164.2 ms** | **`9.8x` faster** | **15/15 (100%)** | **27/30 (90.0%)** |
-| **Local Gemma 3 270M (`include_reason=false`)** | Local Metal GPU (`mlx-lm`) | ~6 toks | **20.4 ms** | **36.6 ms** | **24.3 ms** | **25.5 ms** | **31.3 ms** | 387.0 ms | **`42.9x` faster** | 15/15 (100%) | 16/30 (53.3%) |
-| **Local Gemma 3 270M (`include_reason=true`)** | Local Metal GPU (`mlx-lm`) | ~22 toks | **39.8 ms** | **54.1 ms** | **53.2 ms** | **62.4 ms** | **66.5 ms** | **78.3 ms** | **`21.8x` faster** | 15/15 (100%) | 16/30 (53.3%) |
-| **Cloud `gemini-3.5-flash-lite` (`include_reason=false`)** | Vertex AI (`asia-south1`) | ~8 toks | 548.3 ms | 1097.0 ms | **1043.2 ms** | 1396.2 ms | 1427.4 ms | 2482.7 ms | `1.0x` (baseline) | **15/15 (100%)** | **30/30 (100%)** |
-| **Cloud `gemini-3.5-flash-lite` (`include_reason=true`)** | Vertex AI (`asia-south1`) | ~25 toks | 716.3 ms | 1253.1 ms | **1159.2 ms** | 1533.1 ms | 1588.9 ms | 2513.2 ms | `1.0x` (baseline) | **15/15 (100%)** | **30/30 (100%)** |
+| **Local Gemma 3 1B (`include_reason=false`)** *(Local Fast Gate)* | Local Mac Metal GPU (`mlx-lm`) | ~6 toks | **43.5 ms** | **49.9 ms** | **53.1 ms** | **54.0 ms** | **54.1 ms** | **54.3 ms** | **`19.6x` faster** | **15/15 (100%)** | **27/30 (90.0%)** |
+| **Local Gemma 3 1B (`include_reason=true`)** *(Local Explain Mode)* | Local Mac Metal GPU (`mlx-lm`) | ~22 toks | **71.9 ms** | **114.4 ms** | **118.4 ms** | **146.8 ms** | **149.7 ms** | **164.2 ms** | **`9.8x` faster** | **15/15 (100%)** | **27/30 (90.0%)** |
+| **Local Gemma 3 270M (`include_reason=false`)** | Local Mac Metal GPU (`mlx-lm`) | ~6 toks | **20.4 ms** | **36.6 ms** | **24.3 ms** | **25.5 ms** | **31.3 ms** | 387.0 ms | **`42.9x` faster** | 15/15 (100%) | 16/30 (53.3%) |
+| **Local Gemma 3 270M (`include_reason=true`)** | Local Mac Metal GPU (`mlx-lm`) | ~22 toks | **39.8 ms** | **54.1 ms** | **53.2 ms** | **62.4 ms** | **66.5 ms** | **78.3 ms** | **`21.8x` faster** | 15/15 (100%) | 16/30 (53.3%) |
+| **Vertex `google/gemma-3-270m-it` (`include_reason=false`)** | **Cloud Run `asia-south1` $\rightarrow$ Vertex T4 vLLM (`asia-south1`)** | ~6 toks | **126.2 ms** | **181.5 ms** | **170.1 ms** | **247.1 ms** | **247.1 ms** | **247.1 ms** | **`6.1x` faster** | 15/15 (100%)* | 15/30 (50.0%)* |
+| **Vertex `google/gemma-3-1b-it` (`include_reason=false`)** *(GCP Fast Gate)* | **Cloud Run `asia-south1` $\rightarrow$ Vertex T4 vLLM (`asia-south1`)** | ~6 toks | **130.2 ms** | **192.5 ms** | **188.5 ms** | **240.3 ms** | **249.5 ms** | **255.4 ms** | **`5.5x` faster** | **12/15 (80.0%)** | **25/30 (83.3%)** |
+| **Vertex `google/gemma-3-1b-it` (`include_reason=true`)** | **Cloud Run `asia-south1` $\rightarrow$ Vertex T4 vLLM (`asia-south1`)** | ~22 toks | **239.8 ms** | **425.9 ms** | **439.3 ms** | **545.5 ms** | **553.0 ms** | **611.1 ms** | **`2.6x` faster** | **12/15 (80.0%)** | **25/30 (83.3%)** |
+| **Cloud `gemini-3.5-flash-lite` (`include_reason=false`)** *(Intra-GCP)* | **Cloud Run `asia-south1` $\rightarrow$ Vertex AI (`asia-south1`)** | ~8 toks | **490.6 ms** | **767.9 ms** | **686.1 ms** | **1206.9 ms** | **1335.8 ms** | **2053.8 ms** | **`1.5x` faster** | **15/15 (100%)** | **30/30 (100%)** |
+| **Cloud `gemini-3.5-flash-lite` (`include_reason=true`)** *(Intra-GCP)* | **Cloud Run `asia-south1` $\rightarrow$ Vertex AI (`asia-south1`)** | ~25 toks | **581.7 ms** | **786.0 ms** | **746.3 ms** | **979.1 ms** | **1008.4 ms** | **1236.1 ms** | **`1.6x` faster** | **15/15 (100%)** | **30/30 (100%)** |
+| **Cloud `gemini-3.5-flash-lite` (`include_reason=false`)** *(WAN mTLS)* | Local Mac $\rightarrow$ Vertex AI (`asia-south1`) | ~8 toks | 548.3 ms | 1097.0 ms | **1043.2 ms** | 1396.2 ms | 1427.4 ms | 2482.7 ms | `1.0x` (baseline) | **15/15 (100%)** | **30/30 (100%)** |
+| **Cloud `gemini-3.5-flash-lite` (`include_reason=true`)** *(WAN mTLS)* | Local Mac $\rightarrow$ Vertex AI (`asia-south1`) | ~25 toks | 716.3 ms | 1253.1 ms | **1159.2 ms** | 1533.1 ms | 1588.9 ms | 2513.2 ms | `1.0x` (baseline) | **15/15 (100%)** | **30/30 (100%)** |
 | **Warm LRU Cache Hit (`use_cache=true`)** | In-Memory (`_ROUTER_DECISION_CACHE`) | 0 toks | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **0.0 ms** | **Instant (`~0.8 ms` HTTP)** | **15/15 (100%)** | **27–30/30** |
 
-### 4.2 Key Takeaways: Local Gemma 3 vs. Cloud `gemini-3.5-flash-lite` (`asia-south1`)
-1. **Local Gemma 3 1B (`P50 = 53.1 ms`) is `19.6x` Faster than Cloud `gemini-3.5-flash-lite` (`P50 = 1043.2 ms`)**:
-   - Even with `thinkingBudget: 0`, `responseSchema` enum constraints, and warm HTTP/mTLS keep-alive to `asia-south1-aiplatform.mtls.googleapis.com`, a cloud round-trip to `gemini-3.5-flash-lite` takes **`548–1427 ms` (`P50 = 1043.2 ms`, `Mean = 1097.0 ms`)** just to make the binary routing decision—which is **3x–5x slower than the Vertex AI Agent Search query itself (`~180–350 ms`)**.
-   - By contrast, Local Gemma 3 1B on Metal GPU reuses the pre-warmed **367-token** KV cache in local unified memory and decodes only ~6 tokens (`{"route":"...`), finishing in **`43.5–54.3 ms` (`P50 = 53.1 ms`)** with zero network overhead.
-2. **Both Achieve `100% Recall (15/15)` on `CALL_LLM_INTENT` Queries**:
-   - Neither Local Gemma 3 1B nor Cloud `gemini-3.5-flash-lite` ever misroutes a filter/boost query (`15/15` recall on cities, neighborhoods, price bounds, dates, time slots, formats, languages, genres, and negations).
-   - Cloud `gemini-3.5-flash-lite` achieves `30/30 (100%)` total accuracy vs. Local Gemma 3 1B's `27/30 (90.0%)` (where 3 long entity names are conservatively sent to `CALL_LLM_INTENT`, which is a safe fallback).
+*\*Note: On `NVIDIA_TESLA_T4` (Turing `sm_75`), hardware `bfloat16` is unsupported so vLLM executes in IEEE `float16` (`--dtype=float16`). In `float16`, `gemma-3-270m-it` intermediate activations overflow `65504` (falling back to `CALL_LLM_INTENT`), whereas `gemma-3-1b-it` remains stable in `float16` (`83.3%` accuracy at `P50 = 188.5 ms`).*
+
+### 4.2 Key Takeaways: Intra-GCP (`asia-south1`) vs. Local Metal GPU
+1. **Intra-GCP `asia-south1` Eliminates ~357–540 ms of WAN/mTLS Overhead**:
+   - Calling `gemini-3.5-flash-lite` from the headless FastAPI backend on Cloud Run (`asia-south1`) reduces `P50` latency from **`1043.2 ms` $\rightarrow$ `686.1 ms`** (`include_reason=false`) and **`1159.2 ms` $\rightarrow$ `746.3 ms`** (`include_reason=true`) while retaining **`30/30 (100%)`** classification accuracy.
+   - Calling the dedicated Vertex AI `google/gemma-3-1b-it` vLLM endpoint from Cloud Run (`asia-south1`) reduces `P50` latency from **`~730 ms` (over local mTLS) $\rightarrow$ `188.5 ms` (`Min = 130.2 ms`, `P95 = 249.5 ms`)**—a **`3.6x` speedup over intra-GCP `gemini-3.5-flash-lite` (`686.1 ms`)**.
+2. **Local Gemma 3 1B (`P50 = 53.1 ms`) vs. Intra-GCP Vertex `gemma-3-1b-it` (`P50 = 188.5 ms`)**:
+   - Local Gemma 3 1B on Apple Metal GPU (`53.1 ms`) has zero HTTP serialization or Vertex Online Prediction gateway overhead; in GCP production (`asia-south1`), dedicated Vertex `google/gemma-3-1b-it` achieves **`188.5 ms` `P50`** (`130.2 ms` min).
 
 ### 4.3 Per-Query Breakdown: Local Gemma 3 1B vs. Cloud `gemini-3.5-flash-lite` (`asia-south1`)
 

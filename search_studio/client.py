@@ -248,10 +248,48 @@ _NLU_CACHE_LOCK = threading.Lock()
 _LLM_BOOST_CACHE: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
 _ROUTER_DECISION_CACHE: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
 _MAX_NLU_CACHE = 512
+USE_ADC = os.getenv("USE_ADC", "").lower() == "true" or bool(os.getenv("K_SERVICE"))
+_ADC_TOKEN = ""
+_ADC_TOKEN_EXPIRY = 0.0
 
 
-def get_ecp_client() -> EcpClient:
-    """Return the singleton `EcpClient` instance protected by `_CLIENT_LOCK`."""
+def _get_adc_token(force: bool = False) -> str:
+    """Fetch and cache the GCP Service Account OAuth token from the Cloud Run / GCE Metadata Server."""
+    global _ADC_TOKEN, _ADC_TOKEN_EXPIRY
+    now = time.time()
+    with _CLIENT_LOCK:
+        if not force and _ADC_TOKEN and now < _ADC_TOKEN_EXPIRY:
+            return _ADC_TOKEN
+        try:
+            r = requests.get(
+                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+                headers={"Metadata-Flavor": "Google"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                _ADC_TOKEN = str(data.get("access_token") or "")
+                _ADC_TOKEN_EXPIRY = now + max(60.0, float(data.get("expires_in", 300)) - 60.0)
+                return _ADC_TOKEN
+        except Exception:
+            pass
+        try:
+            import google.auth
+            import google.auth.transport.requests
+
+            creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            creds.refresh(google.auth.transport.requests.Request())
+            _ADC_TOKEN = str(creds.token or "")
+            _ADC_TOKEN_EXPIRY = now + 240.0
+            return _ADC_TOKEN
+        except Exception as exc:
+            raise RuntimeError(f"Failed to obtain GCP ADC token in Cloud Run: {exc}") from exc
+
+
+def get_ecp_client() -> Optional[EcpClient]:
+    """Return the singleton `EcpClient` instance protected by `_CLIENT_LOCK` (or `None` on Cloud Run / ADC)."""
+    if USE_ADC:
+        return None
     global _ECP_CLIENT
     with _CLIENT_LOCK:
         if _ECP_CLIENT is None:
@@ -282,8 +320,26 @@ def get_thread_host_session(target_host: str, force_new: bool = False) -> reques
 
 
 def ecp_post(host: str, path: str, body: Dict[str, Any], user_project: str = PROJECT_ID) -> requests.Response:
-    """Thread-safe keep-alive HTTP POST through local `ecp_http_proxy` with auto-401 & 502-EOF recovery."""
+    """Thread-safe keep-alive HTTP POST (direct intra-GCP HTTPS on Cloud Run, or local `ecp_http_proxy` mTLS)."""
+    if USE_ADC:
+        public_host = host.replace(".mtls.googleapis.com", ".googleapis.com")
+        token = _get_adc_token()
+        session = get_thread_host_session(public_host)
+        url = f"https://{public_host}{path}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "x-goog-user-project": user_project,
+            "Content-Type": "application/json",
+        }
+        resp = session.post(url, headers=headers, json=body, timeout=65)
+        if resp.status_code == 401:
+            token = _get_adc_token(force=True)
+            headers["Authorization"] = f"Bearer {token}"
+            resp = session.post(url, headers=headers, json=body, timeout=65)
+        return resp
+
     client = get_ecp_client()
+    assert client is not None
     with _CLIENT_LOCK:
         client._refresh_token()
         token = client.token
@@ -332,6 +388,7 @@ def ecp_post(host: str, path: str, body: Dict[str, Any], user_project: str = PRO
             headers["Authorization"] = f"Bearer {client.token}"
         resp = session.post(url, headers=headers, json=body, timeout=65)
     return resp
+
 
 
 def _date_context() -> Dict[str, str]:
