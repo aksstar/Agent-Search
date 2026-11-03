@@ -1,8 +1,9 @@
 """High-Performance FastAPI + Uvicorn (`uvloop` + `httptools` + `ORJSONResponse`) Headless API Backend (`asia-south1`).
 
-Separated from the local Search Studio UI (`search_studio/ui.html`), which remains on `http://127.0.0.1:8080`.
-All Vertex AI calls (`google/gemma-3-270m-it` vLLM L4 endpoint, `gemini-3.5-flash-lite`, and Vertex AI Search)
-originate directly inside GCP `asia-south1` over pre-warmed persistent HTTP keep-alive pools.
+Production Pipeline:
+1. SetFit-MiniLM-L6-v2 Contrastive Classifier (`/predict`, `/api/route_decision`) -> ~0.9 ms CPU ONNX routing.
+2. Conditional LLM Slot Extraction (`gemini-3.5-flash-lite` / Local MLX) + Deterministic Boost Compiler (`search_studio/compiler.py`).
+3. Vertex AI Agent Search (`ent-bq-5stores-master-v3-app`).
 """
 
 from __future__ import annotations
@@ -58,13 +59,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Entertainment Agent Search & Gemma 3 / SetFit-MiniLM Decision Router API",
+    title="Entertainment Agent Search & SetFit-MiniLM Decision Router API",
     description=(
         "High-speed headless FastAPI backend (`asia-south1`) for SetFit-MiniLM-L6-v2 Contrastive Classifier, "
-        "Vertex AI Model Garden `google/gemma-3-1b-it` (T4 vLLM `--enable-prefix-caching`), `gemini-3.5-flash-lite`, "
-        "and Vertex AI Agent Search (`v3` / `v2`)."
+        "conditional LLM intent extraction, and Vertex AI Agent Search (`v3` / `v2`)."
     ),
-    version="4.1.0",
+    version="5.0.0",
     default_response_class=ORJSONResponse,
     lifespan=lifespan,
 )

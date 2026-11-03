@@ -8,7 +8,10 @@ venv/
 .DS_Store
 .gcs_sync_state.json
 *.jsonl
-archive/
+archive/*
+!archive/experiments_v1/
+archive/experiments_v1/reports/
+archive/experiments_v1/create_5stores_*.py
 reports/
 EVALUATION_135_QUERIES.md
 REAL_DATA_EVALUATION_135_QUERIES.md

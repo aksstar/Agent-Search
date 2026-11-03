@@ -39,7 +39,7 @@ from search_studio.client import (
 )
 from search_studio.intent_extractor import get_or_init_local_mlx_runtime
 from search_studio.router_api import (
-    get_or_init_local_mlx_router_runtime,
+    _get_or_init_setfit_minilm_runtime,
     handle_route_decision_request,
     handle_router_benchmark_request,
 )
@@ -118,7 +118,11 @@ def _should_use_cloud_run(payload: Dict[str, Any]) -> bool:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Pre-warm local ECP mTLS proxy and Apple Metal GPU KV caches on startup."""
+    """Pre-warm SetFit-MiniLM ONNX router, local ECP mTLS proxy, and Apple Metal GPU KV caches on startup."""
+    try:
+        _get_or_init_setfit_minilm_runtime()
+    except Exception as exc:
+        print(f"[SetFit-MiniLM Router] Skipping startup pre-warm: {exc}", flush=True)
     get_ecp_client()
     if HAS_MLX:
         with _MLX_GPU_LOCK:
@@ -127,10 +131,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                     get_or_init_local_mlx_runtime(local_key)
                 except Exception as exc:
                     print(f"[MLX] Skipping startup pre-warm for {local_key}: {exc}", flush=True)
-            try:
-                get_or_init_local_mlx_router_runtime("local:gemma-3-1b-it-qat-4bit")
-            except Exception as exc:
-                print(f"[MLX Router] Skipping startup pre-warm for Gemma 3 1B router: {exc}", flush=True)
     yield
 
 

@@ -985,8 +985,8 @@
       <div class="sidebar-section" id="singleEngineModeGroup" style="display:none;">
         <div class="section-label" id="nluModeLabel">Inspector Mode</div>
         <select id="nluModeSelect" onchange="triggerActiveTabSearch()">
-          <option value="auto_route">🧭 Auto-Route (Gemma 3 Decision API)</option>
-          <option value="llm_boost" selected>Selected Boost LLM</option>
+          <option value="auto_route" selected>🧭 Auto-Route (SetFit-MiniLM Classifier • 0.9 ms)</option>
+          <option value="llm_boost">Always Call Boost LLM</option>
           <option value="vertex_native">Managed Vertex NLQU</option>
           <option value="none">Direct Agent Search (No LLM Intent)</option>
         </select>
@@ -1618,7 +1618,7 @@
         const rColor = isCallLlm ? '#34d399' : '#7dd3fc';
         routerBadgeHtml = `
           <div style="margin-top:5px; font-size:11px; color:${rColor}; font-weight:600;" title="${escapeHtml(rd.reason || '')}">
-            ${rIcon} Gemma 3 Router (${rd.router_latency_ms} ms): <code>${escapeHtml(rd.route)}</code> — <span style="color:var(--text-secondary); font-weight:400;">${escapeHtml(rd.reason || '')}</span>
+            ${rIcon} SetFit-MiniLM Router (${rd.router_latency_ms} ms): <code>${escapeHtml(rd.route)}</code> — <span style="color:var(--text-secondary); font-weight:400;">${escapeHtml(rd.reason || '')}</span>
           </div>
         `;
       }

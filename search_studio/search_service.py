@@ -130,11 +130,11 @@ def run_live_search(params: Dict[str, Any]) -> Dict[str, Any]:
     app_key = app_cfg["key"]
     target_search_path = app_cfg["search_path"]
 
-    nlu_mode = str(params.get("nlu_mode") or "llm_boost").strip().lower()
+    nlu_mode = str(params.get("nlu_mode") or "auto_route").strip().lower()
     if nlu_mode in ("gemini_boost", "asia_south1_llm", "gemini", "argon", "local_mlx"):
         nlu_mode = "llm_boost"
     elif nlu_mode not in ("llm_boost", "vertex_native", "none", "auto_route"):
-        nlu_mode = "llm_boost"
+        nlu_mode = "auto_route"
 
     selected_model = str(params.get("gemini_model") or DEFAULT_BOOST_MODEL).strip()
     router_model = str(params.get("router_model") or DEFAULT_ROUTER_MODEL).strip()
